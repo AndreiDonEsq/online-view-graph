@@ -19,6 +19,7 @@ export class RoomNetwork {
     this.eventSource = null;
     this.isConnected = false;
     this.reconnectTimer = null;
+    this.connectionTimer = null;
     this.reconnectAttempt = 0;
     this.disconnected = false;
     this.connect();
@@ -38,6 +39,7 @@ export class RoomNetwork {
 
     this.eventSource.onopen = () => {
       this.isConnected = true;
+      clearTimeout(this.connectionTimer);
       this.reconnectAttempt = 0;
       console.log(`[Network] Connected to room: ${this.roomTopic}`);
       this.onOpen?.();
@@ -57,15 +59,19 @@ export class RoomNetwork {
       }
     };
 
-    this.eventSource.onerror = (err) => {
+    const retryConnection = () => {
+      clearTimeout(this.connectionTimer);
       console.warn('[Network] SSE connection error, reconnecting with backoff...');
       this.isConnected = false;
       this.eventSource.close();
-      this.onError?.('Connection interrupted. Reconnecting…');
+      this.onError?.('Cannot connect to the room service. Retrying automatically…');
       clearTimeout(this.reconnectTimer);
       const delay = Math.min(10000 * (2 ** this.reconnectAttempt++), 60000);
       this.reconnectTimer = setTimeout(() => this.connect(), delay);
     };
+    this.eventSource.onerror = retryConnection;
+    // Some browsers leave a stalled connection pending without firing onerror.
+    this.connectionTimer = setTimeout(retryConnection, 12000);
   }
 
   /**
@@ -73,11 +79,14 @@ export class RoomNetwork {
    * @param {Object} data 
    */
   async publish(data) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 12000);
     try {
       const url = `https://ntfy.sh/${encodeURIComponent(this.roomTopic)}`;
       const response = await fetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        signal: controller.signal,
         body: JSON.stringify(data)
       });
       if (!response.ok) {
@@ -92,12 +101,15 @@ export class RoomNetwork {
       console.error('[Network] Publish error:', err);
       this.onError?.('Could not reach the room. Check your connection; joining will retry automatically.');
       return false;
+    } finally {
+      clearTimeout(timeout);
     }
   }
 
   disconnect() {
     this.disconnected = true;
     clearTimeout(this.reconnectTimer);
+    clearTimeout(this.connectionTimer);
     if (this.eventSource) {
       this.eventSource.close();
       this.eventSource = null;

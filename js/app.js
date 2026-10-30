@@ -9,9 +9,9 @@
  *    with touch sliders, and see final graphs when finished.
  */
 
-import { AppState, getGraphTheme } from './state.js';
-import { GraphRenderer } from './graph.js';
-import { RoomNetwork } from './network.js';
+import { AppState, getGraphTheme } from './state.js?v=20261030.3';
+import { GraphRenderer } from './graph.js?v=20261030.3';
+import { RoomNetwork } from './network.js?v=20261030.3';
 
 class MentoringMatrixApp {
   constructor() {

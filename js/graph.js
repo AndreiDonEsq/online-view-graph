@@ -12,8 +12,8 @@
  * - Interactive dragging and click-to-place support for facilitators.
  */
 
-import { Geometry } from './geometry.js';
-import { getGraphTheme } from './state.js';
+import { Geometry } from './geometry.js?v=20261030.3';
+import { getGraphTheme } from './state.js?v=20261030.3';
 
 export class GraphRenderer {
   constructor(options = {}) {
