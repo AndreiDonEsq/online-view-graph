@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Mentoring Activity 2D Matrix (Useful vs Fun)</title>
+  <link rel="stylesheet" href="css/styles.css">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📊</text></svg>">
+</head>
+<body>
+
+  <!-- Top App Navigation Bar -->
+  <header class="app-header">
+    <div class="brand">
+      <div class="brand-icon">M</div>
+      <div>
+        <div class="brand-title">Mentoring 2D Matrix</div>
+      </div>
+    </div>
+    <div class="nav-actions">
+      <button id="nav-btn-setup" class="btn btn-secondary btn-sm" title="Configure Prompts & Participants">⚙️ Setup</button>
+      <button id="nav-btn-rate" class="btn btn-secondary btn-sm" title="Rate Activities">✏️ Rate Activities</button>
+      <button id="nav-btn-overview" class="btn btn-primary btn-sm" title="View All Graphs">📊 All Graphs</button>
+    </div>
+  </header>
+
+  <!-- Main Application Body -->
+  <main class="container">
+
+    <!-- ========================================================
+         VIEW 1: SETUP SCREEN
+         ======================================================== -->
+    <section id="view-setup" class="view-panel active">
+      <div class="setup-card">
+        <div class="setup-hero">
+          <h1>Mentoring Activities Setup</h1>
+          <p>Define your training questions and add participants to begin rating.</p>
+        </div>
+
+        <!-- Section A: Number of Questions & Prompt Texts -->
+        <div class="setup-section">
+          <label for="input-num-prompts">1. Number of Questions / Prompts</label>
+          <div class="section-hint">How many mentoring activities do you want participants to discuss and rate?</div>
+          <div style="display: flex; gap: 0.5rem; align-items: center; margin-bottom: 1rem;">
+            <input type="number" id="input-num-prompts" class="input-text" style="max-width: 120px;" min="1" max="24" value="6">
+            <button type="button" id="btn-apply-num-prompts" class="btn btn-secondary">Set Count</button>
+            <button type="button" id="btn-add-prompt-row" class="btn btn-secondary btn-sm">+ Add One</button>
+          </div>
+
+          <label>Questions / Activity Prompts</label>
+          <div class="section-hint">Enter each prompt (no presets included; type your own custom activities):</div>
+          <div id="prompts-input-container" class="prompts-list">
+            <!-- Dynamic prompt rows injected by JS -->
+          </div>
+        </div>
+
+        <hr style="border: 0; border-top: 1px solid var(--border-color); margin: 1.5rem 0;">
+
+        <!-- Section B: Participants List -->
+        <div class="setup-section">
+          <label for="textarea-participants">2. Participants</label>
+          <div class="section-hint">Enter participant names separated by commas or lines (e.g. Alice, Bob, Charlie, Elena):</div>
+          <textarea id="textarea-participants" rows="3" placeholder="Alice, Bob, Charlie, David, Elena..."></textarea>
+          <div id="participants-preview-pills" class="pills-preview">
+            <!-- Live colored pills preview injected by JS -->
+          </div>
+        </div>
+
+        <div style="display: flex; justify-content: flex-end; gap: 0.75rem; margin-top: 2rem;">
+          <button type="button" id="btn-start-session" class="btn btn-primary btn-lg">
+            Start Rating Activities →
+          </button>
+        </div>
+      </div>
+    </section>
+
+    <!-- ========================================================
+         VIEW 2: FACILITATOR INTERACTIVE RATING SCREEN
+         ======================================================== -->
+    <section id="view-rate" class="view-panel">
+      <!-- Active Prompt Header Bar -->
+      <div class="rate-header">
+        <button id="btn-prev-prompt" class="btn btn-secondary">← Previous</button>
+        <div class="prompt-title-wrapper" style="text-align: center;">
+          <div id="rate-prompt-tag" class="prompt-tag">Activity 1 of 6</div>
+          <h2 id="rate-prompt-title" class="prompt-heading">Activity Prompt Text</h2>
+        </div>
+        <div style="display: flex; gap: 0.5rem;">
+          <button id="btn-next-prompt" class="btn btn-secondary">Next →</button>
+          <button id="btn-view-graphs-shortcut" class="btn btn-primary">View All Graphs 📊</button>
+        </div>
+      </div>
+
+      <div class="rate-grid-layout">
+        <!-- Left: Interactive 2D Coordinate Graph -->
+        <div class="graph-panel-box">
+          <div class="panel-header-sub">
+            <span>Interactive 2D Matrix</span>
+            <span style="font-size: 0.8rem; font-weight: normal; color: var(--text-muted);">
+              Select a person below, then click or drag on the matrix
+            </span>
+          </div>
+
+          <!-- Participant selector buttons -->
+          <div id="quick-participant-bar" class="quick-select-bar">
+            <!-- Injected by JS -->
+          </div>
+
+          <!-- SVG Graph Container -->
+          <div id="interactive-graph-container" class="interactive-canvas-container">
+            <!-- Interactive SVG injected here -->
+          </div>
+        </div>
+
+        <!-- Right: Slider Controls Table -->
+        <div class="inputs-panel-box">
+          <div class="panel-header-sub">
+            <span>Participant Ratings (1 - 10)</span>
+            <span id="ratings-count-summary" style="font-size: 0.8rem; font-weight: normal; color: var(--text-muted);">
+              0 of 0 rated
+            </span>
+          </div>
+
+          <div id="participant-sliders-list" style="max-height: 520px; overflow-y: auto; padding-right: 0.25rem;">
+            <!-- Individual participant rating slider rows injected here -->
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ========================================================
+         VIEW 3: ALL GRAPHS GRID (Reproducing the User Sketch)
+         ======================================================== -->
+    <section id="view-overview" class="view-panel">
+      <div class="overview-topbar">
+        <div class="overview-top-row">
+          <div>
+            <h2 style="font-size: 1.4rem; font-weight: 800; color: #0f172a;">Mentoring Activities Matrix</h2>
+            <p style="font-size: 0.85rem; color: var(--text-muted);">
+              Visualizing group consensus across all prompts: <strong>Y = FUN</strong>, <strong>X = GOOD / USEFUL</strong>
+            </p>
+          </div>
+          <div style="display: flex; gap: 0.5rem; flex-wrap: wrap;">
+            <button id="btn-toggle-presentation" class="btn btn-secondary btn-sm" title="Toggle Fullscreen Clean Mode">📺 Presentation Mode</button>
+            <button id="btn-print" class="btn btn-secondary btn-sm" title="Print or save as PDF">🖨️ Print / PDF</button>
+            <button id="btn-export-json" class="btn btn-secondary btn-sm" title="Export session data">💾 Backup JSON</button>
+            <button id="btn-import-json" class="btn btn-secondary btn-sm" title="Import session data">📂 Restore JSON</button>
+            <button id="btn-overview-edit" class="btn btn-primary btn-sm">✏️ Edit Ratings</button>
+            <button id="btn-reset-session" class="btn btn-danger btn-sm">🔄 Reset</button>
+          </div>
+        </div>
+
+        <!-- Color Legend for all participants -->
+        <div class="overview-legend">
+          <span class="legend-title">Participants:</span>
+          <div id="overview-legend-pills" style="display: flex; flex-wrap: wrap; gap: 0.4rem;">
+            <!-- Injected by JS -->
+          </div>
+        </div>
+      </div>
+
+      <!-- The Responsive Grid of Prompts -->
+      <div id="all-graphs-grid" class="prompt-graphs-grid">
+        <!-- One card per prompt, injected by JS -->
+      </div>
+    </section>
+
+  </main>
+
+  <!-- Backup & Restore Modal -->
+  <div id="modal-json" class="modal-overlay" style="display: none;">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h3 id="modal-json-title">Session Data (JSON)</h3>
+        <button id="btn-close-modal" class="btn btn-secondary btn-sm">✕</button>
+      </div>
+      <textarea id="textarea-json-data" rows="12" style="font-family: monospace; font-size: 0.82rem; margin-bottom: 1rem;"></textarea>
+      <div style="display: flex; justify-content: flex-end; gap: 0.5rem;">
+        <button id="btn-copy-json" class="btn btn-secondary">Copy to Clipboard</button>
+        <button id="btn-apply-imported-json" class="btn btn-primary" style="display: none;">Apply Imported Data</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Main ES Module Script -->
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>
