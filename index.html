@@ -125,7 +125,7 @@
             <h3 style="font-size: 1.1rem; font-weight: 800;">
               Participants Joined (<span id="count-joined-pax">0</span>)
             </h3>
-            <span style="font-size: 0.8rem; color: #10b981; font-weight: 700;">● Live Sync Active</span>
+            <span id="host-network-status" role="status" style="font-size: 0.8rem; color: var(--text-muted); font-weight: 700;">Connecting…</span>
           </div>
           <div id="joined-pax-pills" class="pills-preview" style="min-height: 50px; background: #f8fafc; border: 1.5px dashed var(--border-color); border-radius: 10px; padding: 0.75rem;">
             <span style="color: #94a3b8; font-size: 0.85rem; font-style: italic;">Waiting for participants to join...</span>
@@ -253,11 +253,11 @@
     <section id="view-pax-waiting" class="view-panel pax-panel">
       <div class="setup-card" style="max-width: 480px; text-align: center; padding: 3rem 1.5rem; margin-top: 3rem;">
         <div style="font-size: 3rem; margin-bottom: 1rem; animation: pulse 2s infinite;">⏳</div>
-        <h2 style="font-size: 1.5rem; font-weight: 800; margin-bottom: 0.5rem;">
-          You're in, <span id="pax-display-name">Participant</span>!
+        <h2 id="pax-waiting-heading" style="font-size: 1.5rem; font-weight: 800; margin-bottom: 0.5rem;">
+          Connecting, <span id="pax-display-name">Participant</span>…
         </h2>
-        <p style="color: var(--text-muted); font-size: 1rem;">
-          Waiting for the facilitator to start the activity ratings...
+        <p id="pax-waiting-status" role="status" style="color: var(--text-muted); font-size: 1rem;">
+          Waiting for the facilitator to confirm your connection…
         </p>
       </div>
     </section>

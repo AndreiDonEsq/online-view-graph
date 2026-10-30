@@ -31,7 +31,6 @@ class MentoringMatrixApp {
     this.hostStatus = 'setup'; // 'setup' | 'waiting' | 'active' | 'finished'
     this.activePromptIndex = 0;
     this.network = null;
-    this.heartbeatTimer = null;
 
     // Participant state
     this.paxStoragePrefix = `mentoring_pax_${this.roomTopic || 'host'}_`;
@@ -39,6 +38,9 @@ class MentoringMatrixApp {
     this.paxName = localStorage.getItem(`${this.paxStoragePrefix}name`) || sessionStorage.getItem(`${this.paxStoragePrefix}name`) || '';
     this.paxCode = localStorage.getItem(`${this.paxStoragePrefix}code`) || sessionStorage.getItem(`${this.paxStoragePrefix}code`) || '';
     this.paxSubmittedForPrompt = {}; // { [promptId]: true }
+    this.paxJoinTimer = null;
+    this.paxJoinAttempt = 0;
+    this.paxJoinAcknowledged = false;
 
     this.initDOMElements();
     this.bindEvents();
@@ -93,6 +95,7 @@ class MentoringMatrixApp {
     this.countJoinedPax = document.getElementById('count-joined-pax');
     this.joinedPaxPills = document.getElementById('joined-pax-pills');
     this.btnHostStartWorkshop = document.getElementById('btn-host-start-workshop');
+    this.hostNetworkStatus = document.getElementById('host-network-status');
 
     // Host Live Control
     this.hostPromptTag = document.getElementById('host-prompt-tag');
@@ -116,6 +119,8 @@ class MentoringMatrixApp {
     this.inputPaxName = document.getElementById('input-pax-name');
     this.btnPaxConfirmJoin = document.getElementById('btn-pax-confirm-join');
     this.paxDisplayName = document.getElementById('pax-display-name');
+    this.paxWaitingHeading = document.getElementById('pax-waiting-heading');
+    this.paxWaitingStatus = document.getElementById('pax-waiting-status');
     this.paxRateTag = document.getElementById('pax-rate-tag');
     this.paxBadgePreview = document.getElementById('pax-badge-preview');
     this.paxRatePromptText = document.getElementById('pax-rate-prompt-text');
@@ -305,8 +310,6 @@ class MentoringMatrixApp {
   }
 
   async closeHostRoom() {
-    if (this.heartbeatTimer) clearInterval(this.heartbeatTimer);
-    this.heartbeatTimer = null;
     const previousNetwork = this.network;
     this.network = null;
     if (previousNetwork) {
@@ -358,19 +361,28 @@ class MentoringMatrixApp {
 
     // Connect real-time pub-sub
     const topic = this.roomTopic;
+    this.hostNetworkStatus.textContent = 'Connecting…';
     this.network = new RoomNetwork(topic, (msg) => {
       if (this.network?.roomTopic === topic) this.handleHostIncomingMessage(msg);
+    }, {
+      onOpen: () => {
+        if (this.network?.roomTopic !== topic) return;
+        this.hostNetworkStatus.textContent = 'Connected';
+        this.broadcastHostState();
+      },
+      onError: (message) => {
+        if (this.network?.roomTopic === topic) this.hostNetworkStatus.textContent = message;
+      }
     });
 
-    // Periodic state broadcast (heartbeat)
-    this.heartbeatTimer = setInterval(() => this.broadcastHostState(), 3500);
-
-    this.broadcastHostState();
+    // State is sent on connection, participant joins, votes, and host actions.
+    // Idle broadcasts consume the shared service quota without changing anything.
     this.switchHostView('waiting');
   }
 
-  broadcastHostState() {
+  async broadcastHostState() {
     if (!this.network) return;
+    const network = this.network;
 
     const payload = {
       type: 'host_sync',
@@ -382,7 +394,9 @@ class MentoringMatrixApp {
       ratings: this.state.ratings
     };
 
-    this.network.publish(payload);
+    if (await network.publish(payload) && this.network === network) {
+      this.hostNetworkStatus.textContent = 'Connected';
+    }
   }
 
   handleHostIncomingMessage(msg) {
@@ -654,7 +668,19 @@ class MentoringMatrixApp {
     this.paxHeaderRoomTitle.textContent = `Room: ${this.roomCode || ''}`;
 
     // Connect to room network
-    this.network = new RoomNetwork(this.roomTopic, (msg) => this.handlePaxIncomingMessage(msg));
+    this.network = new RoomNetwork(this.roomTopic, (msg) => this.handlePaxIncomingMessage(msg), {
+      onOpen: () => {
+        if (this.paxId) {
+          this.paxJoinAcknowledged = false;
+          this.paxWaitingHeading.textContent = `Connecting, ${this.paxName}…`;
+          this.paxWaitingStatus.textContent = 'Waiting for the facilitator to confirm your connection…';
+          this.requestPaxJoin();
+        }
+      },
+      onError: (message) => {
+        this.paxWaitingStatus.textContent = message;
+      }
+    });
 
     // Check if participant already entered name
     if (this.paxId && this.paxName) {
@@ -663,14 +689,22 @@ class MentoringMatrixApp {
       localStorage.setItem(`${this.paxStoragePrefix}code`, this.paxCode);
       this.paxDisplayName.textContent = this.paxName;
       this.paxBadgePreview.textContent = this.paxCode;
-      this.network.publish({ type: 'pax_join', paxId: this.paxId, name: this.paxName, code: this.paxCode });
+      this.paxWaitingHeading.textContent = `Connecting, ${this.paxName}…`;
       this.switchPaxView('waiting');
     } else {
       this.switchPaxView('join');
     }
+  }
 
-    // Ping host for latest state
-    this.network.publish({ type: 'pax_hello', paxId: this.paxId });
+  requestPaxJoin() {
+    if (!this.paxId || this.paxJoinAcknowledged) return;
+    clearTimeout(this.paxJoinTimer);
+    // Retry independently of host broadcasts, with backoff to respect service limits.
+    const delay = Math.min(8000 * (2 ** this.paxJoinAttempt++), 60000);
+    this.paxJoinTimer = setTimeout(() => this.requestPaxJoin(), delay);
+    this.network.publish({
+      type: 'pax_join', paxId: this.paxId, name: this.paxName, code: this.paxCode
+    });
   }
 
   switchPaxView(view) {
@@ -712,21 +746,18 @@ class MentoringMatrixApp {
     this.paxDisplayName.textContent = this.paxName;
     this.paxBadgePreview.textContent = this.paxCode;
 
-    // Send join message to host
-    this.network.publish({
-      type: 'pax_join',
-      paxId: this.paxId,
-      name: this.paxName,
-      code: this.paxCode
-    });
-
+    this.paxWaitingHeading.textContent = `Connecting, ${this.paxName}…`;
+    this.paxWaitingStatus.textContent = 'Waiting for the facilitator to confirm your connection…';
     this.switchPaxView('waiting');
+    this.requestPaxJoin();
   }
 
   handlePaxIncomingMessage(msg) {
     if (!msg || typeof msg !== 'object') return;
 
     if (msg.type === 'room_closed') {
+      clearTimeout(this.paxJoinTimer);
+      this.paxJoinTimer = null;
       this.network.disconnect();
       for (const key of ['id', 'name', 'code']) {
         sessionStorage.removeItem(`${this.paxStoragePrefix}${key}`);
@@ -761,17 +792,18 @@ class MentoringMatrixApp {
       return;
     }
 
-    // Keep retrying a missed join until the host acknowledges this participant.
-    // Reuse the same ID so retries cannot create duplicate participant entries.
-    if (Array.isArray(sync.participants) &&
+    if (!Array.isArray(sync.participants) ||
         !sync.participants.some(participant => participant.id === this.paxId)) {
-      this.network.publish({
-        type: 'pax_join',
-        paxId: this.paxId,
-        name: this.paxName,
-        code: this.paxCode
-      });
+      this.paxJoinAcknowledged = false;
+      if (!this.paxJoinTimer) this.requestPaxJoin();
+      return;
     }
+    this.paxJoinAcknowledged = true;
+    this.paxJoinAttempt = 0;
+    clearTimeout(this.paxJoinTimer);
+    this.paxJoinTimer = null;
+    this.paxWaitingHeading.textContent = `You're in, ${this.paxName}!`;
+    this.paxWaitingStatus.textContent = 'Waiting for the facilitator to start the activity ratings…';
 
     if (sync.status === 'waiting') {
       this.switchPaxView('waiting');
