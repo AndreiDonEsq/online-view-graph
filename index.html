@@ -6,6 +6,12 @@
   <title>Mentoring Activity 2D Matrix (Impactful vs Fun)</title>
   <link rel="stylesheet" href="css/styles.css">
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📊</text></svg>">
+  <script>
+    // Immediate pre-render check to prevent any host settings flicker on mobile
+    if (new URLSearchParams(window.location.search).has('room')) {
+      document.documentElement.classList.add('participant-mode');
+    }
+  </script>
 </head>
 <body>
 
@@ -16,7 +22,7 @@
   </button>
 
   <!-- Top App Navigation Bar (Host View) -->
-  <header id="host-header" class="app-header">
+  <header id="host-header" class="app-header host-panel">
     <div class="brand">
       <div class="brand-icon">M</div>
       <div>
@@ -32,10 +38,10 @@
   </header>
 
   <!-- Participant Mobile Top Bar -->
-  <header id="pax-header" class="app-header" style="display: none; justify-content: center;">
+  <header id="pax-header" class="app-header pax-panel" style="display: none; justify-content: center;">
     <div class="brand">
       <div class="brand-icon">M</div>
-      <div class="brand-title" id="pax-header-room-title">Mentoring Workshop</div>
+      <div class="brand-title" id="pax-header-room-title">Join Room</div>
     </div>
   </header>
 
@@ -45,7 +51,7 @@
     <!-- ========================================================
          HOST VIEW 1: SETUP SCREEN (Create Room with Prompts)
          ======================================================== -->
-    <section id="view-setup" class="view-panel active">
+    <section id="view-setup" class="view-panel host-panel active">
       <div class="setup-card">
         <div class="setup-hero">
           <h1>Mentoring Activities Workshop</h1>
@@ -83,7 +89,7 @@
     <!-- ========================================================
          HOST VIEW 2: WAITING ROOM (Share Link & Pax Arrival)
          ======================================================== -->
-    <section id="view-host-waiting" class="view-panel">
+    <section id="view-host-waiting" class="view-panel host-panel">
       <div class="setup-card" style="text-align: center;">
         <div style="display: inline-block; background: #e0e7ff; color: #4338ca; font-weight: 800; font-size: 0.85rem; padding: 0.25rem 0.85rem; border-radius: 999px; margin-bottom: 0.75rem;">
           LIVE WORKSHOP ROOM
@@ -136,7 +142,7 @@
     <!-- ========================================================
          HOST VIEW 3: LIVE WORKSHOP CONTROL (Pacing the Activities)
          ======================================================== -->
-    <section id="view-host-active" class="view-panel">
+    <section id="view-host-active" class="view-panel host-panel">
       <!-- Active Prompt Header Bar -->
       <div class="rate-header">
         <button id="btn-host-prev-prompt" class="btn btn-secondary">← Previous</button>
@@ -184,7 +190,7 @@
     <!-- ========================================================
          HOST VIEW 4: ALL GRAPHS GRID (Final Results Screen)
          ======================================================== -->
-    <section id="view-overview" class="view-panel">
+    <section id="view-overview" class="view-panel host-panel">
       <div class="overview-topbar">
         <div class="overview-top-row">
           <div>
@@ -218,10 +224,10 @@
     <!-- ========================================================
          PARTICIPANT VIEW 1: JOIN SCREEN (Enter Name)
          ======================================================== -->
-    <section id="view-pax-join" class="view-panel">
+    <section id="view-pax-join" class="view-panel pax-panel">
       <div class="setup-card" style="max-width: 480px; text-align: center; margin-top: 2rem;">
         <div class="brand-icon" style="width: 54px; height: 54px; font-size: 1.8rem; margin: 0 auto 1rem auto;">M</div>
-        <h2 style="font-size: 1.6rem; font-weight: 800; margin-bottom: 0.25rem;">Join Mentoring Workshop</h2>
+        <h2 style="font-size: 1.6rem; font-weight: 800; margin-bottom: 0.25rem;">Join Room</h2>
         <p style="color: var(--text-muted); font-size: 0.9rem; margin-bottom: 1.75rem;">
           Room: <strong id="pax-join-room-code" style="color: var(--primary);">-----</strong>
         </p>
@@ -242,7 +248,7 @@
     <!-- ========================================================
          PARTICIPANT VIEW 2: WAITING FOR FACILITATOR
          ======================================================== -->
-    <section id="view-pax-waiting" class="view-panel">
+    <section id="view-pax-waiting" class="view-panel pax-panel">
       <div class="setup-card" style="max-width: 480px; text-align: center; padding: 3rem 1.5rem; margin-top: 3rem;">
         <div style="font-size: 3rem; margin-bottom: 1rem; animation: pulse 2s infinite;">⏳</div>
         <h2 style="font-size: 1.5rem; font-weight: 800; margin-bottom: 0.5rem;">
@@ -257,7 +263,7 @@
     <!-- ========================================================
          PARTICIPANT VIEW 3: LIVE PROMPT RATING (Sliders Only)
          ======================================================== -->
-    <section id="view-pax-rate" class="view-panel">
+    <section id="view-pax-rate" class="view-panel pax-panel">
       <div class="setup-card" style="max-width: 540px; margin: 1rem auto; padding: 1.5rem;">
         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.75rem;">
           <span id="pax-rate-tag" class="prompt-tag">Activity 1 of 6</span>
@@ -307,7 +313,7 @@
     <!-- ========================================================
          PARTICIPANT VIEW 4: FINAL RESULTS (All Graphs)
          ======================================================== -->
-    <section id="view-pax-results" class="view-panel">
+    <section id="view-pax-results" class="view-panel pax-panel">
       <div style="text-align: center; margin-bottom: 1.5rem;">
         <h2 style="font-size: 1.5rem; font-weight: 800; color: #0f172a;">Workshop Results</h2>
         <p style="color: var(--text-muted); font-size: 0.9rem;">

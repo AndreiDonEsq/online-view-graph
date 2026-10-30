@@ -152,6 +152,16 @@ main.container {
   display: block;
 }
 
+/* Participant Mode Strict Screen Isolation */
+.participant-mode .host-panel {
+  display: none !important;
+}
+
+html:not(.participant-mode) .pax-panel,
+body:not(.participant-mode) .pax-panel {
+  display: none !important;
+}
+
 /* -------------------------------------------------------------
    1. SETUP SCREEN
    ------------------------------------------------------------- */

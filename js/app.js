@@ -254,6 +254,8 @@ class MentoringMatrixApp {
    * ------------------------------------------------------------------------ */
 
   initHostFlow() {
+    document.documentElement.classList.remove('participant-mode');
+    document.body.classList.remove('participant-mode');
     this.hostHeader.style.display = 'flex';
     this.paxHeader.style.display = 'none';
     this.renderSetupPromptRows(6); // 6 blank prompts ready to fill
@@ -261,6 +263,15 @@ class MentoringMatrixApp {
   }
 
   switchHostView(view) {
+    document.documentElement.classList.remove('participant-mode');
+    document.body.classList.remove('participant-mode');
+
+    // Deactivate all participant views
+    this.viewPaxJoin.classList.remove('active');
+    this.viewPaxWaiting.classList.remove('active');
+    this.viewPaxRate.classList.remove('active');
+    this.viewPaxResults.classList.remove('active');
+
     this.viewSetup.classList.toggle('active', view === 'setup');
     this.viewHostWaiting.classList.toggle('active', view === 'waiting');
     this.viewHostActive.classList.toggle('active', view === 'active');
@@ -580,6 +591,15 @@ class MentoringMatrixApp {
    * ------------------------------------------------------------------------ */
 
   initParticipantFlow() {
+    document.documentElement.classList.add('participant-mode');
+    document.body.classList.add('participant-mode');
+
+    // Ensure all host panels are completely hidden
+    this.viewSetup.classList.remove('active');
+    this.viewHostWaiting.classList.remove('active');
+    this.viewHostActive.classList.remove('active');
+    this.viewOverview.classList.remove('active');
+
     this.hostHeader.style.display = 'none';
     this.paxHeader.style.display = 'flex';
     this.paxJoinRoomCode.textContent = this.roomCode || 'ROOM';
@@ -603,6 +623,15 @@ class MentoringMatrixApp {
   }
 
   switchPaxView(view) {
+    document.documentElement.classList.add('participant-mode');
+    document.body.classList.add('participant-mode');
+
+    // Explicitly hide all host panels
+    this.viewSetup.classList.remove('active');
+    this.viewHostWaiting.classList.remove('active');
+    this.viewHostActive.classList.remove('active');
+    this.viewOverview.classList.remove('active');
+
     this.viewPaxJoin.classList.toggle('active', view === 'join');
     this.viewPaxWaiting.classList.toggle('active', view === 'waiting');
     this.viewPaxRate.classList.toggle('active', view === 'rate');
