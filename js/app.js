@@ -2,12 +2,16 @@
  * app.js
  * 
  * Main controller for the Mentoring Activities 2D Matrix application.
- * Manages view transitions, facilitator interactions, SVG events,
- * and data synchronization.
+ * Supports:
+ * 1. Host Mode: Facilitator creates a room, shares QR/link, paces through prompts,
+ *    and reveals all graphs at the end.
+ * 2. Participant Mode: Participants join via phone, enter their name, rate each prompt
+ *    with touch sliders, and see final graphs when finished.
  */
 
 import { AppState, getGraphTheme } from './state.js';
 import { GraphRenderer } from './graph.js';
+import { RoomNetwork } from './network.js';
 
 class MentoringMatrixApp {
   constructor() {
@@ -15,22 +19,31 @@ class MentoringMatrixApp {
     this.graphRenderer = new GraphRenderer({ width: 440, height: 380 });
     this.miniGraphRenderer = new GraphRenderer({ width: 340, height: 290 });
 
-    this.currentView = 'setup';
+    // Mode determination
+    const urlParams = new URLSearchParams(window.location.search);
+    this.isParticipant = urlParams.has('room');
+    this.roomTopic = urlParams.get('room') || null;
+    this.roomCode = urlParams.get('code') || (this.roomTopic ? this.roomTopic.substring(0, 5).toUpperCase() : null);
+
+    // Host state
+    this.hostStatus = 'setup'; // 'setup' | 'waiting' | 'active' | 'finished'
     this.activePromptIndex = 0;
-    this.activeParticipantId = null;
+    this.network = null;
+    this.heartbeatTimer = null;
+
+    // Participant state
+    this.paxId = sessionStorage.getItem('mentoring_pax_id') || null;
+    this.paxName = sessionStorage.getItem('mentoring_pax_name') || '';
+    this.paxCode = sessionStorage.getItem('mentoring_pax_code') || '';
+    this.paxSubmittedForPrompt = {}; // { [promptId]: true }
 
     this.initDOMElements();
     this.bindEvents();
 
-    // Subscribe to state changes
-    this.state.subscribe(() => this.onStateChanged());
-
-    // Initial view decision
-    if (this.state.prompts.length > 0 && this.state.participants.length > 0) {
-      this.switchView('overview');
+    if (this.isParticipant) {
+      this.initParticipantFlow();
     } else {
-      this.switchView('setup');
-      this.renderSetupPromptRows(6); // Default 6 blank prompt rows ready to fill
+      this.initHostFlow();
     }
   }
 
@@ -38,71 +51,89 @@ class MentoringMatrixApp {
    * Cache references to key DOM elements.
    */
   initDOMElements() {
-    // Floating Exit Presentation Mode Button
-    this.btnFloatingExitPresentation = document.getElementById('btn-floating-exit-presentation');
+    // Headers
+    this.hostHeader = document.getElementById('host-header');
+    this.paxHeader = document.getElementById('pax-header');
+    this.paxHeaderRoomTitle = document.getElementById('pax-header-room-title');
 
-    // Nav buttons
+    // Host Nav
     this.navBtnSetup = document.getElementById('nav-btn-setup');
-    this.navBtnRate = document.getElementById('nav-btn-rate');
+    this.navBtnWaiting = document.getElementById('nav-btn-waiting');
+    this.navBtnLive = document.getElementById('nav-btn-live');
     this.navBtnOverview = document.getElementById('nav-btn-overview');
 
     // Views
     this.viewSetup = document.getElementById('view-setup');
-    this.viewRate = document.getElementById('view-rate');
+    this.viewHostWaiting = document.getElementById('view-host-waiting');
+    this.viewHostActive = document.getElementById('view-host-active');
     this.viewOverview = document.getElementById('view-overview');
 
-    // Setup elements
+    this.viewPaxJoin = document.getElementById('view-pax-join');
+    this.viewPaxWaiting = document.getElementById('view-pax-waiting');
+    this.viewPaxRate = document.getElementById('view-pax-rate');
+    this.viewPaxResults = document.getElementById('view-pax-results');
+
+    // Host Setup
     this.inputNumPrompts = document.getElementById('input-num-prompts');
     this.btnApplyNumPrompts = document.getElementById('btn-apply-num-prompts');
     this.btnAddPromptRow = document.getElementById('btn-add-prompt-row');
     this.promptsContainer = document.getElementById('prompts-input-container');
-    this.textareaParticipants = document.getElementById('textarea-participants');
-    this.participantsPreviewPills = document.getElementById('participants-preview-pills');
-    this.btnStartSession = document.getElementById('btn-start-session');
+    this.btnCreateRoom = document.getElementById('btn-create-room');
+    this.btnOfflineMode = document.getElementById('btn-offline-mode');
 
-    // Rating elements
-    this.ratePromptTag = document.getElementById('rate-prompt-tag');
-    this.ratePromptTitle = document.getElementById('rate-prompt-title');
-    this.btnPrevPrompt = document.getElementById('btn-prev-prompt');
-    this.btnNextPrompt = document.getElementById('btn-next-prompt');
-    this.btnViewGraphsShortcut = document.getElementById('btn-view-graphs-shortcut');
-    this.quickParticipantBar = document.getElementById('quick-participant-bar');
-    this.interactiveGraphContainer = document.getElementById('interactive-graph-container');
-    this.participantSlidersList = document.getElementById('participant-sliders-list');
-    this.ratingsCountSummary = document.getElementById('ratings-count-summary');
+    // Host Waiting Room
+    this.displayRoomCode = document.getElementById('display-room-code');
+    this.roomQrImage = document.getElementById('room-qr-image');
+    this.inputShareLink = document.getElementById('input-share-link');
+    this.btnCopyShareLink = document.getElementById('btn-copy-share-link');
+    this.countJoinedPax = document.getElementById('count-joined-pax');
+    this.joinedPaxPills = document.getElementById('joined-pax-pills');
+    this.btnHostStartWorkshop = document.getElementById('btn-host-start-workshop');
 
-    // Overview elements
+    // Host Live Control
+    this.hostPromptTag = document.getElementById('host-prompt-tag');
+    this.hostPromptTitle = document.getElementById('host-prompt-title');
+    this.btnHostPrevPrompt = document.getElementById('btn-host-prev-prompt');
+    this.btnHostNextPrompt = document.getElementById('btn-host-next-prompt');
+    this.hostLivePaxCount = document.getElementById('host-live-pax-count');
+    this.hostActiveGraphContainer = document.getElementById('host-active-graph-container');
+    this.hostPaxStatusList = document.getElementById('host-pax-status-list');
+
+    // Host Overview
     this.allGraphsGrid = document.getElementById('all-graphs-grid');
     this.overviewLegendPills = document.getElementById('overview-legend-pills');
     this.btnTogglePresentation = document.getElementById('btn-toggle-presentation');
+    this.btnFloatingExitPresentation = document.getElementById('btn-floating-exit-presentation');
     this.btnPrint = document.getElementById('btn-print');
-    this.btnExportJson = document.getElementById('btn-export-json');
-    this.btnImportJson = document.getElementById('btn-import-json');
-    this.btnOverviewEdit = document.getElementById('btn-overview-edit');
-    this.btnResetSession = document.getElementById('btn-reset-session');
+    this.btnRestartRoom = document.getElementById('btn-restart-room');
 
-    // Modal elements
-    this.modalJson = document.getElementById('modal-json');
-    this.modalJsonTitle = document.getElementById('modal-json-title');
-    this.textareaJsonData = document.getElementById('textarea-json-data');
-    this.btnCloseModal = document.getElementById('btn-close-modal');
-    this.btnCopyJson = document.getElementById('btn-copy-json');
-    this.btnApplyImportedJson = document.getElementById('btn-apply-imported-json');
+    // Participant elements
+    this.paxJoinRoomCode = document.getElementById('pax-join-room-code');
+    this.inputPaxName = document.getElementById('input-pax-name');
+    this.btnPaxConfirmJoin = document.getElementById('btn-pax-confirm-join');
+    this.paxDisplayName = document.getElementById('pax-display-name');
+    this.paxRateTag = document.getElementById('pax-rate-tag');
+    this.paxBadgePreview = document.getElementById('pax-badge-preview');
+    this.paxRatePromptText = document.getElementById('pax-rate-prompt-text');
+    this.paxSliderGood = document.getElementById('pax-slider-good');
+    this.paxSliderFun = document.getElementById('pax-slider-fun');
+    this.paxValGood = document.getElementById('pax-val-good');
+    this.paxValFun = document.getElementById('pax-val-fun');
+    this.btnPaxSubmitVote = document.getElementById('btn-pax-submit-vote');
+    this.paxSubmitStatus = document.getElementById('pax-submit-status');
+    this.paxGraphsGrid = document.getElementById('pax-graphs-grid');
   }
 
   /**
-   * Bind event handlers to UI buttons and inputs.
+   * Bind DOM event listeners.
    */
   bindEvents() {
-    // Navigation
-    this.navBtnSetup.addEventListener('click', () => this.switchView('setup'));
-    this.navBtnRate.addEventListener('click', () => this.switchView('rate'));
-    this.navBtnOverview.addEventListener('click', () => this.switchView('overview'));
-
-    // Presentation Mode toggle & exit
-    this.btnTogglePresentation.addEventListener('click', () => {
-      document.body.classList.toggle('presentation-mode');
-    });
+    // Presentation Mode toggle & keyboard escape
+    if (this.btnTogglePresentation) {
+      this.btnTogglePresentation.addEventListener('click', () => {
+        document.body.classList.toggle('presentation-mode');
+      });
+    }
 
     if (this.btnFloatingExitPresentation) {
       this.btnFloatingExitPresentation.addEventListener('click', () => {
@@ -110,143 +141,378 @@ class MentoringMatrixApp {
       });
     }
 
-    // Keyboard 'Escape' key exits presentation mode easily
     window.addEventListener('keydown', (e) => {
       if (e.key === 'Escape' && document.body.classList.contains('presentation-mode')) {
         document.body.classList.remove('presentation-mode');
       }
     });
 
-    // Setup actions
-    this.btnApplyNumPrompts.addEventListener('click', () => {
-      const count = parseInt(this.inputNumPrompts.value, 10) || 1;
-      this.renderSetupPromptRows(count);
-    });
-
-    this.btnAddPromptRow.addEventListener('click', () => {
-      this.addSetupPromptRow('');
-      this.inputNumPrompts.value = this.promptsContainer.children.length;
-    });
-
-    this.textareaParticipants.addEventListener('input', () => {
-      this.updateParticipantsPreview();
-    });
-
-    this.btnStartSession.addEventListener('click', () => this.handleStartSession());
-
-    // Rating navigation
-    this.btnPrevPrompt.addEventListener('click', () => this.navigatePrompt(-1));
-    this.btnNextPrompt.addEventListener('click', () => this.navigatePrompt(1));
-    this.btnViewGraphsShortcut.addEventListener('click', () => this.switchView('overview'));
-
-    // Overview actions
-    this.btnPrint.addEventListener('click', () => window.print());
-    this.btnOverviewEdit.addEventListener('click', () => this.switchView('rate'));
-
-    this.btnResetSession.addEventListener('click', () => {
-      if (confirm('Are you sure you want to reset all prompts and ratings?')) {
-        this.state.resetAll();
-        this.renderSetupPromptRows(6);
-        this.textareaParticipants.value = '';
-        this.participantsPreviewPills.innerHTML = '';
-        this.switchView('setup');
-      }
-    });
-
-    // JSON export / import modal
-    this.btnExportJson.addEventListener('click', () => {
-      this.modalJsonTitle.textContent = 'Backup Session Data (JSON)';
-      this.textareaJsonData.value = this.state.exportJSON();
-      this.btnApplyImportedJson.style.display = 'none';
-      this.modalJson.style.display = 'flex';
-    });
-
-    this.btnImportJson.addEventListener('click', () => {
-      this.modalJsonTitle.textContent = 'Paste Session JSON to Restore';
-      this.textareaJsonData.value = '';
-      this.btnApplyImportedJson.style.display = 'inline-flex';
-      this.modalJson.style.display = 'flex';
-    });
-
-    this.btnCloseModal.addEventListener('click', () => {
-      this.modalJson.style.display = 'none';
-    });
-
-    this.btnCopyJson.addEventListener('click', () => {
-      navigator.clipboard.writeText(this.textareaJsonData.value);
-      alert('JSON copied to clipboard!');
-    });
-
-    this.btnApplyImportedJson.addEventListener('click', () => {
-      try {
-        this.state.importJSON(this.textareaJsonData.value);
-        this.modalJson.style.display = 'none';
-        this.switchView('overview');
-      } catch (err) {
-        alert('Invalid JSON: ' + err.message);
-      }
-    });
-  }
-
-  /**
-   * Switch between Setup, Rate, and Overview views.
-   * @param {'setup'|'rate'|'overview'} viewName 
-   */
-  switchView(viewName) {
-    this.currentView = viewName;
-
-    // View panels
-    this.viewSetup.classList.toggle('active', viewName === 'setup');
-    this.viewRate.classList.toggle('active', viewName === 'rate');
-    this.viewOverview.classList.toggle('active', viewName === 'overview');
-
-    // Nav buttons styling
-    this.navBtnSetup.className = viewName === 'setup' ? 'btn btn-primary btn-sm' : 'btn btn-secondary btn-sm';
-    this.navBtnRate.className = viewName === 'rate' ? 'btn btn-primary btn-sm' : 'btn btn-secondary btn-sm';
-    this.navBtnOverview.className = viewName === 'overview' ? 'btn btn-primary btn-sm' : 'btn btn-secondary btn-sm';
-
-    if (viewName === 'rate') {
-      this.renderRateScreen();
-    } else if (viewName === 'overview') {
-      this.renderOverviewScreen();
+    if (this.btnPrint) {
+      this.btnPrint.addEventListener('click', () => window.print());
     }
-  }
 
-  /**
-   * Reaction to AppState changes.
-   */
-  onStateChanged() {
-    if (this.currentView === 'rate') {
-      this.renderRateScreen();
-    } else if (this.currentView === 'overview') {
-      this.renderOverviewScreen();
+    if (this.btnRestartRoom) {
+      this.btnRestartRoom.addEventListener('click', () => {
+        if (confirm('Start a fresh session? This will reset all current ratings.')) {
+          window.location.href = window.location.pathname;
+        }
+      });
+    }
+
+    // Host Setup handlers
+    if (this.btnApplyNumPrompts) {
+      this.btnApplyNumPrompts.addEventListener('click', () => {
+        const count = parseInt(this.inputNumPrompts.value, 10) || 1;
+        this.renderSetupPromptRows(count);
+      });
+    }
+
+    if (this.btnAddPromptRow) {
+      this.btnAddPromptRow.addEventListener('click', () => {
+        this.addSetupPromptRow('');
+        this.inputNumPrompts.value = this.promptsContainer.children.length;
+      });
+    }
+
+    if (this.btnCreateRoom) {
+      this.btnCreateRoom.addEventListener('click', () => this.handleCreateRoom());
+    }
+
+    if (this.btnOfflineMode) {
+      this.btnOfflineMode.addEventListener('click', () => {
+        const promptInputs = Array.from(this.promptsContainer.querySelectorAll('input.prompt-text-input'));
+        const texts = promptInputs.map(inp => inp.value.trim()).filter(t => t.length > 0);
+        if (texts.length === 0) {
+          alert('Please enter at least one activity prompt.');
+          return;
+        }
+        this.state.setPrompts(texts);
+        this.state.setParticipants(['Alice', 'Bob', 'Charlie']);
+        this.switchHostView('overview');
+      });
+    }
+
+    // Host Waiting Room handlers
+    if (this.btnCopyShareLink) {
+      this.btnCopyShareLink.addEventListener('click', () => {
+        this.inputShareLink.select();
+        navigator.clipboard.writeText(this.inputShareLink.value);
+        this.btnCopyShareLink.textContent = 'Copied! ✓';
+        setTimeout(() => { this.btnCopyShareLink.textContent = 'Copy Link'; }, 2000);
+      });
+    }
+
+    if (this.btnHostStartWorkshop) {
+      this.btnHostStartWorkshop.addEventListener('click', () => this.handleHostStartWorkshop());
+    }
+
+    // Host Live Control handlers
+    if (this.btnHostPrevPrompt) {
+      this.btnHostPrevPrompt.addEventListener('click', () => this.navigateHostPrompt(-1));
+    }
+
+    if (this.btnHostNextPrompt) {
+      this.btnHostNextPrompt.addEventListener('click', () => this.handleHostNextClick());
+    }
+
+    // Host Navigation bar tabs
+    if (this.navBtnSetup) this.navBtnSetup.addEventListener('click', () => this.switchHostView('setup'));
+    if (this.navBtnWaiting) this.navBtnWaiting.addEventListener('click', () => this.switchHostView('waiting'));
+    if (this.navBtnLive) this.navBtnLive.addEventListener('click', () => this.switchHostView('active'));
+    if (this.navBtnOverview) this.navBtnOverview.addEventListener('click', () => this.switchHostView('overview'));
+
+    // Participant handlers
+    if (this.btnPaxConfirmJoin) {
+      this.btnPaxConfirmJoin.addEventListener('click', () => this.handlePaxJoinConfirm());
+    }
+
+    if (this.inputPaxName) {
+      this.inputPaxName.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') this.handlePaxJoinConfirm();
+      });
+    }
+
+    if (this.paxSliderGood && this.paxValGood) {
+      this.paxSliderGood.addEventListener('input', () => {
+        this.paxValGood.textContent = parseFloat(this.paxSliderGood.value).toFixed(1);
+      });
+    }
+
+    if (this.paxSliderFun && this.paxValFun) {
+      this.paxSliderFun.addEventListener('input', () => {
+        this.paxValFun.textContent = parseFloat(this.paxSliderFun.value).toFixed(1);
+      });
+    }
+
+    if (this.btnPaxSubmitVote) {
+      this.btnPaxSubmitVote.addEventListener('click', () => this.handlePaxSubmitVote());
     }
   }
 
   /* ------------------------------------------------------------------------
-   * 1. SETUP SCREEN CONTROLLER
+   * A. FACILITATOR / HOST FLOW
    * ------------------------------------------------------------------------ */
 
-  /**
-   * Render N input rows for prompts in the Setup screen.
-   */
+  initHostFlow() {
+    this.hostHeader.style.display = 'flex';
+    this.paxHeader.style.display = 'none';
+    this.renderSetupPromptRows(6); // 6 blank prompts ready to fill
+    this.switchHostView('setup');
+  }
+
+  switchHostView(view) {
+    this.viewSetup.classList.toggle('active', view === 'setup');
+    this.viewHostWaiting.classList.toggle('active', view === 'waiting');
+    this.viewHostActive.classList.toggle('active', view === 'active');
+    this.viewOverview.classList.toggle('active', view === 'overview');
+
+    this.navBtnSetup.style.display = 'inline-flex';
+    this.navBtnWaiting.style.display = this.roomTopic ? 'inline-flex' : 'none';
+    this.navBtnLive.style.display = (this.hostStatus === 'active' || this.hostStatus === 'finished') ? 'inline-flex' : 'none';
+    this.navBtnOverview.style.display = (this.hostStatus === 'finished' || this.state.prompts.length > 0) ? 'inline-flex' : 'none';
+
+    if (view === 'active') {
+      this.renderHostActivePrompt();
+    } else if (view === 'overview') {
+      this.renderOverviewScreen();
+    }
+  }
+
+  handleCreateRoom() {
+    const promptInputs = Array.from(this.promptsContainer.querySelectorAll('input.prompt-text-input'));
+    const texts = promptInputs.map(inp => inp.value.trim()).filter(t => t.length > 0);
+
+    if (texts.length === 0) {
+      alert('Please enter at least one activity prompt to rate.');
+      return;
+    }
+
+    this.state.setPrompts(texts);
+
+    // Generate room code and unique topic
+    this.roomCode = Math.random().toString(36).substring(2, 7).toUpperCase();
+    this.roomTopic = `mentoring_${this.roomCode.toLowerCase()}_${Date.now().toString(36)}`;
+    this.hostStatus = 'waiting';
+
+    const joinUrl = `${window.location.origin}${window.location.pathname}?room=${encodeURIComponent(this.roomTopic)}&code=${this.roomCode}`;
+
+    this.displayRoomCode.textContent = this.roomCode;
+    this.inputShareLink.value = joinUrl;
+    this.roomQrImage.src = `https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(joinUrl)}`;
+
+    // Connect real-time pub-sub
+    this.network = new RoomNetwork(this.roomTopic, (msg) => this.handleHostIncomingMessage(msg));
+
+    // Periodic state broadcast (heartbeat)
+    if (this.heartbeatTimer) clearInterval(this.heartbeatTimer);
+    this.heartbeatTimer = setInterval(() => this.broadcastHostState(), 3500);
+
+    this.broadcastHostState();
+    this.switchHostView('waiting');
+  }
+
+  broadcastHostState() {
+    if (!this.network) return;
+
+    const payload = {
+      type: 'host_sync',
+      status: this.hostStatus,
+      roomCode: this.roomCode,
+      promptIndex: this.activePromptIndex,
+      prompts: this.state.prompts,
+      participants: this.state.participants,
+      ratings: this.state.ratings
+    };
+
+    this.network.publish(payload);
+  }
+
+  handleHostIncomingMessage(msg) {
+    if (!msg || typeof msg !== 'object') return;
+
+    if (msg.type === 'pax_join') {
+      this.handlePaxJoinedOnHost(msg);
+    } else if (msg.type === 'pax_vote') {
+      this.handlePaxVotedOnHost(msg);
+    } else if (msg.type === 'pax_hello') {
+      this.broadcastHostState();
+    }
+  }
+
+  handlePaxJoinedOnHost({ paxId, name, code }) {
+    if (!this.state.participants.some(p => p.id === paxId)) {
+      this.state.participants.push({
+        id: paxId,
+        name: name || 'Participant',
+        code: code || name.substring(0, 3).toUpperCase()
+      });
+      this.state.notify();
+    }
+
+    this.renderJoinedPaxPills();
+    this.broadcastHostState();
+  }
+
+  renderJoinedPaxPills() {
+    const list = this.state.participants;
+    this.countJoinedPax.textContent = list.length;
+
+    if (list.length === 0) {
+      this.joinedPaxPills.innerHTML = `<span style="color: #94a3b8; font-size: 0.85rem; font-style: italic;">Waiting for participants to join...</span>`;
+      return;
+    }
+
+    this.joinedPaxPills.innerHTML = '';
+    list.forEach(p => {
+      const pill = document.createElement('div');
+      pill.className = 'participant-pill';
+      pill.innerHTML = `
+        <span class="pill-code-badge">${p.code}</span>
+        <span>${this.escapeHTML(p.name)}</span>
+      `;
+      this.joinedPaxPills.appendChild(pill);
+    });
+  }
+
+  handleHostStartWorkshop() {
+    if (this.state.participants.length === 0) {
+      if (!confirm('No participants have joined yet. Do you still want to start?')) {
+        return;
+      }
+    }
+
+    this.hostStatus = 'active';
+    this.activePromptIndex = 0;
+    this.broadcastHostState();
+    this.switchHostView('active');
+  }
+
+  navigateHostPrompt(dir) {
+    const total = this.state.prompts.length;
+    if (total === 0) return;
+    this.activePromptIndex = (this.activePromptIndex + dir + total) % total;
+    this.broadcastHostState();
+    this.renderHostActivePrompt();
+  }
+
+  handleHostNextClick() {
+    const isLast = this.activePromptIndex === this.state.prompts.length - 1;
+
+    if (isLast) {
+      // Facilitator clicked "Finish" on the final prompt
+      this.hostStatus = 'finished';
+      this.broadcastHostState();
+      this.switchHostView('overview');
+    } else {
+      // Advance to next prompt
+      this.activePromptIndex++;
+      this.broadcastHostState();
+      this.renderHostActivePrompt();
+    }
+  }
+
+  renderHostActivePrompt() {
+    const prompt = this.state.prompts[this.activePromptIndex];
+    if (!prompt) return;
+
+    const theme = getGraphTheme(this.activePromptIndex);
+    const total = this.state.prompts.length;
+    const isLast = this.activePromptIndex === total - 1;
+
+    // Header and button labels
+    this.hostPromptTag.textContent = `Activity ${this.activePromptIndex + 1} of ${total}`;
+    this.hostPromptTag.style.backgroundColor = theme.fill;
+    this.hostPromptTag.style.color = theme.primary;
+    this.hostPromptTag.style.border = `1px solid ${theme.stroke}`;
+    this.hostPromptTitle.textContent = prompt.text;
+
+    // Last prompt button is named "Finish"
+    if (isLast) {
+      this.btnHostNextPrompt.textContent = 'Finish 🎉';
+      this.btnHostNextPrompt.className = 'btn btn-primary btn-lg';
+      this.btnHostNextPrompt.style.backgroundColor = '#10b981';
+      this.btnHostNextPrompt.style.borderColor = '#059669';
+    } else {
+      this.btnHostNextPrompt.textContent = 'Next Prompt →';
+      this.btnHostNextPrompt.className = 'btn btn-primary';
+      this.btnHostNextPrompt.style.backgroundColor = '';
+      this.btnHostNextPrompt.style.borderColor = '';
+    }
+
+    // Render live updating SVG graph
+    this.hostActiveGraphContainer.innerHTML = '';
+    const ratings = this.state.ratings[prompt.id] || {};
+    const svg = this.graphRenderer.renderSVG(
+      prompt,
+      this.activePromptIndex,
+      this.state.participants,
+      ratings,
+      { isInteractive: false }
+    );
+    this.hostActiveGraphContainer.appendChild(svg);
+
+    // Participant voting status list (green checkmarks)
+    this.renderHostPaxStatusList(prompt);
+  }
+
+  renderHostPaxStatusList(prompt) {
+    this.hostPaxStatusList.innerHTML = '';
+    const participants = this.state.participants;
+    const ratings = this.state.ratings[prompt.id] || {};
+    let submittedCount = 0;
+
+    participants.forEach(p => {
+      const vote = ratings[p.id];
+      const hasVoted = !!vote;
+      if (hasVoted) submittedCount++;
+
+      const row = document.createElement('div');
+      row.className = `pax-status-row ${hasVoted ? 'submitted' : ''}`;
+      row.innerHTML = `
+        <div style="display: flex; align-items: center; gap: 0.5rem;">
+          <span class="pill-code-badge">${p.code}</span>
+          <strong>${this.escapeHTML(p.name)}</strong>
+        </div>
+        <div>
+          ${hasVoted ? `
+            <span style="color: #10b981; font-weight: 800; font-size: 0.85rem;">
+              ✓ Submitted (Imp: ${vote.good}, Fun: ${vote.fun})
+            </span>
+          ` : `
+            <span style="color: #94a3b8; font-size: 0.8rem; font-style: italic;">
+              Thinking...
+            </span>
+          `}
+        </div>
+      `;
+      this.hostPaxStatusList.appendChild(row);
+    });
+
+    this.hostLivePaxCount.textContent = `${submittedCount} of ${participants.length} submitted`;
+  }
+
+  handlePaxVotedOnHost({ paxId, promptId, good, fun }) {
+    this.state.setRating(promptId, paxId, good, fun);
+    if (this.hostStatus === 'active') {
+      this.renderHostActivePrompt();
+    }
+    this.broadcastHostState();
+  }
+
   renderSetupPromptRows(count) {
-    const existingTexts = Array.from(this.promptsContainer.querySelectorAll('input.prompt-text-input'))
+    const existing = Array.from(this.promptsContainer.querySelectorAll('input.prompt-text-input'))
       .map(inp => inp.value);
 
     this.promptsContainer.innerHTML = '';
     const total = Math.max(1, Math.min(24, count));
 
     for (let i = 0; i < total; i++) {
-      const initialText = existingTexts[i] || (this.state.prompts[i]?.text ?? '');
+      const initialText = existing[i] || (this.state.prompts[i]?.text ?? '');
       this.addSetupPromptRow(initialText, i + 1);
     }
     this.inputNumPrompts.value = total;
   }
 
-  /**
-   * Add a single prompt input row.
-   */
   addSetupPromptRow(text = '', index = null) {
     const rowIdx = index || (this.promptsContainer.children.length + 1);
     const row = document.createElement('div');
@@ -259,309 +525,15 @@ class MentoringMatrixApp {
 
     row.querySelector('.btn-delete-row').addEventListener('click', () => {
       row.remove();
-      this.reindexSetupRows();
+      const rows = this.promptsContainer.querySelectorAll('.prompt-row');
+      rows.forEach((r, idx) => { r.querySelector('.prompt-badge').textContent = `#${idx + 1}`; });
+      this.inputNumPrompts.value = rows.length;
     });
 
     this.promptsContainer.appendChild(row);
   }
 
-  reindexSetupRows() {
-    const rows = this.promptsContainer.querySelectorAll('.prompt-row');
-    rows.forEach((row, idx) => {
-      row.querySelector('.prompt-badge').textContent = `#${idx + 1}`;
-    });
-    this.inputNumPrompts.value = rows.length;
-  }
-
-  /**
-   * Parse participant names from the textarea and render live preview pills with 3-letter codes.
-   */
-  updateParticipantsPreview() {
-    const raw = this.textareaParticipants.value;
-    const names = raw.split(/[\n,]/).map(n => n.trim()).filter(n => n.length > 0);
-    this.participantsPreviewPills.innerHTML = '';
-
-    names.forEach((name, idx) => {
-      const code = name.replace(/[^a-zA-Z0-9]/g, '').substring(0, 3).toUpperCase() || `P${idx + 1}`;
-      const pill = document.createElement('div');
-      pill.className = 'participant-pill';
-      pill.innerHTML = `
-        <span class="pill-code-badge">${code}</span>
-        <span>${this.escapeHTML(name)}</span>
-      `;
-      this.participantsPreviewPills.appendChild(pill);
-    });
-  }
-
-  /**
-   * Validate setup inputs and transition to rating.
-   */
-  handleStartSession() {
-    const promptInputs = Array.from(this.promptsContainer.querySelectorAll('input.prompt-text-input'));
-    const promptTexts = promptInputs.map(inp => inp.value.trim()).filter(t => t.length > 0);
-
-    if (promptTexts.length === 0) {
-      alert('Please enter at least one question or activity prompt.');
-      return;
-    }
-
-    const rawParticipants = this.textareaParticipants.value;
-    const participantNames = rawParticipants.split(/[\n,]/).map(n => n.trim()).filter(n => n.length > 0);
-
-    if (participantNames.length === 0) {
-      alert('Please enter at least one participant name.');
-      return;
-    }
-
-    this.state.setPrompts(promptTexts);
-    this.state.setParticipants(participantNames);
-    this.activePromptIndex = 0;
-    this.activeParticipantId = this.state.participants[0]?.id || null;
-
-    this.switchView('rate');
-  }
-
-  /* ------------------------------------------------------------------------
-   * 2. INTERACTIVE RATING SCREEN CONTROLLER
-   * ------------------------------------------------------------------------ */
-
-  navigatePrompt(direction) {
-    const total = this.state.prompts.length;
-    if (total === 0) return;
-    this.activePromptIndex = (this.activePromptIndex + direction + total) % total;
-    this.renderRateScreen();
-  }
-
-  renderRateScreen() {
-    const prompt = this.state.prompts[this.activePromptIndex];
-    if (!prompt) {
-      if (this.state.prompts.length === 0) {
-        this.switchView('setup');
-        return;
-      }
-      this.activePromptIndex = 0;
-      return this.renderRateScreen();
-    }
-
-    // Theme color for this active graph
-    const theme = getGraphTheme(this.activePromptIndex);
-
-    // Header info matching graph theme color
-    this.ratePromptTag.textContent = `Activity ${this.activePromptIndex + 1} of ${this.state.prompts.length}`;
-    this.ratePromptTag.style.backgroundColor = theme.fill;
-    this.ratePromptTag.style.color = theme.primary;
-    this.ratePromptTag.style.border = `1px solid ${theme.stroke}`;
-    this.ratePromptTitle.textContent = prompt.text;
-
-    // Quick participant selection bar
-    this.renderQuickParticipantBar(theme);
-
-    // Render interactive SVG Graph
-    this.renderInteractiveGraph(prompt, theme);
-
-    // Render Sliders List
-    this.renderParticipantSliders(prompt, theme);
-  }
-
-  renderQuickParticipantBar(theme) {
-    this.quickParticipantBar.innerHTML = '';
-    const participants = this.state.participants;
-
-    if (!this.activeParticipantId || !participants.some(p => p.id === this.activeParticipantId)) {
-      this.activeParticipantId = participants[0]?.id || null;
-    }
-
-    participants.forEach(p => {
-      const btn = document.createElement('button');
-      btn.type = 'button';
-      const isActive = p.id === this.activeParticipantId;
-      btn.className = `participant-select-btn ${isActive ? 'active' : ''}`;
-
-      if (isActive) {
-        btn.style.backgroundColor = theme.primary;
-        btn.style.borderColor = theme.primary;
-      } else {
-        btn.style.backgroundColor = '';
-        btn.style.borderColor = '';
-      }
-
-      btn.innerHTML = `
-        <span class="pill-code-badge" style="${isActive ? 'background:#ffffff; color:' + theme.primary : 'background:' + theme.primary + '; color:#ffffff'}">${p.code}</span>
-        <span>${this.escapeHTML(p.name)}</span>
-      `;
-      btn.addEventListener('click', () => {
-        this.activeParticipantId = p.id;
-        this.renderRateScreen();
-      });
-      this.quickParticipantBar.appendChild(btn);
-    });
-  }
-
-  renderInteractiveGraph(prompt, theme) {
-    this.interactiveGraphContainer.innerHTML = '';
-
-    const ratings = this.state.ratings[prompt.id] || {};
-    const svg = this.graphRenderer.renderSVG(
-      prompt,
-      this.activePromptIndex,
-      this.state.participants,
-      ratings,
-      {
-        isInteractive: true,
-        activeParticipantId: this.activeParticipantId
-      }
-    );
-
-    // Click on graph to set active participant's rating directly
-    svg.addEventListener('click', (e) => {
-      if (!this.activeParticipantId) return;
-
-      const rect = svg.getBoundingClientRect();
-      const clickX = ((e.clientX - rect.left) / rect.width) * this.graphRenderer.width;
-      const clickY = ((e.clientY - rect.top) / rect.height) * this.graphRenderer.height;
-
-      const good = this.graphRenderer.invertX(clickX);
-      const fun = this.graphRenderer.invertY(clickY);
-
-      this.state.setRating(prompt.id, this.activeParticipantId, good, fun);
-    });
-
-    // Drag-and-drop support for participant nodes
-    let isDragging = false;
-    let draggedParticipantId = null;
-
-    svg.addEventListener('mousedown', (e) => {
-      const node = e.target.closest('.point-node');
-      if (node) {
-        isDragging = true;
-        draggedParticipantId = node.getAttribute('data-participant-id');
-        this.activeParticipantId = draggedParticipantId;
-        e.stopPropagation();
-      }
-    });
-
-    window.addEventListener('mousemove', (e) => {
-      if (!isDragging || !draggedParticipantId) return;
-
-      const rect = svg.getBoundingClientRect();
-      const mouseX = ((e.clientX - rect.left) / rect.width) * this.graphRenderer.width;
-      const mouseY = ((e.clientY - rect.top) / rect.height) * this.graphRenderer.height;
-
-      const good = this.graphRenderer.invertX(mouseX);
-      const fun = this.graphRenderer.invertY(mouseY);
-
-      this.state.setRating(prompt.id, draggedParticipantId, good, fun);
-    });
-
-    window.addEventListener('mouseup', () => {
-      if (isDragging) {
-        isDragging = false;
-        draggedParticipantId = null;
-      }
-    });
-
-    this.interactiveGraphContainer.appendChild(svg);
-  }
-
-  renderParticipantSliders(prompt, theme) {
-    this.participantSlidersList.innerHTML = '';
-    const participants = this.state.participants;
-    const promptRatings = this.state.ratings[prompt.id] || {};
-
-    let ratedCount = 0;
-
-    participants.forEach(p => {
-      const rating = promptRatings[p.id];
-      const hasRating = !!rating;
-      if (hasRating) ratedCount++;
-
-      const goodVal = rating ? rating.good : 5.0;
-      const funVal = rating ? rating.fun : 5.0;
-      const isActive = p.id === this.activeParticipantId;
-
-      const card = document.createElement('div');
-      card.className = `participant-slider-card ${isActive ? 'active' : ''}`;
-      if (isActive) {
-        card.style.borderColor = theme.primary;
-        card.style.boxShadow = `0 0 0 1px ${theme.primary}`;
-      }
-
-      card.innerHTML = `
-        <div class="slider-card-header">
-          <div style="display: flex; align-items: center; gap: 0.5rem;">
-            <span class="pill-code-badge" style="background-color: ${theme.primary};">${p.code}</span>
-            <strong>${this.escapeHTML(p.name)}</strong>
-          </div>
-          <div>
-            ${hasRating ? `
-              <button type="button" class="btn btn-secondary btn-sm btn-clear-rating" title="Remove rating">Clear</button>
-            ` : `
-              <span style="font-size: 0.75rem; color: #94a3b8;">Not rated yet</span>
-            `}
-          </div>
-        </div>
-        <div class="slider-group">
-          <!-- Impactful to Mentee Slider -->
-          <div class="slider-control">
-            <label>
-              <span>Impactful to Mentee:</span>
-              <strong class="good-val-badge" style="color: ${theme.primary};">${hasRating ? goodVal : '-'}</strong>
-            </label>
-            <input type="range" class="range-good" min="1" max="10" step="0.5" value="${goodVal}" style="accent-color: ${theme.primary};">
-          </div>
-          <!-- Fun for Mentor Slider -->
-          <div class="slider-control">
-            <label>
-              <span>Fun for Mentor:</span>
-              <strong class="fun-val-badge" style="color: ${theme.primary};">${hasRating ? funVal : '-'}</strong>
-            </label>
-            <input type="range" class="range-fun" min="1" max="10" step="0.5" value="${funVal}" style="accent-color: ${theme.primary};">
-          </div>
-        </div>
-      `;
-
-      card.addEventListener('click', (e) => {
-        if (!e.target.closest('input') && !e.target.closest('button')) {
-          this.activeParticipantId = p.id;
-          this.renderQuickParticipantBar(theme);
-          this.renderParticipantSliders(prompt, theme);
-          this.renderInteractiveGraph(prompt, theme);
-        }
-      });
-
-      const goodInput = card.querySelector('.range-good');
-      const funInput = card.querySelector('.range-fun');
-      const clearBtn = card.querySelector('.btn-clear-rating');
-
-      const handleSliderChange = () => {
-        const newGood = parseFloat(goodInput.value);
-        const newFun = parseFloat(funInput.value);
-        this.activeParticipantId = p.id;
-        this.state.setRating(prompt.id, p.id, newGood, newFun);
-      };
-
-      goodInput.addEventListener('input', handleSliderChange);
-      funInput.addEventListener('input', handleSliderChange);
-
-      if (clearBtn) {
-        clearBtn.addEventListener('click', (e) => {
-          e.stopPropagation();
-          this.state.removeRating(prompt.id, p.id);
-        });
-      }
-
-      this.participantSlidersList.appendChild(card);
-    });
-
-    this.ratingsCountSummary.textContent = `${ratedCount} of ${participants.length} rated`;
-  }
-
-  /* ------------------------------------------------------------------------
-   * 3. ALL GRAPHS GRID CONTROLLER (Reproducing the user's sketch)
-   * ------------------------------------------------------------------------ */
-
   renderOverviewScreen() {
-    // 1. Participant Legend Bar (Showing 3-letter codes)
     this.overviewLegendPills.innerHTML = '';
     this.state.participants.forEach(p => {
       const pill = document.createElement('div');
@@ -573,20 +545,188 @@ class MentoringMatrixApp {
       this.overviewLegendPills.appendChild(pill);
     });
 
-    // 2. Grid of prompt graph cards (1, 2, 3, 4, 5, 6...)
     this.allGraphsGrid.innerHTML = '';
+    this.state.prompts.forEach((prompt, idx) => {
+      const theme = getGraphTheme(idx);
+      const card = document.createElement('div');
+      card.className = 'prompt-graph-card';
+      card.style.borderTop = `4px solid ${theme.primary}`;
 
-    if (this.state.prompts.length === 0) {
-      this.allGraphsGrid.innerHTML = `
-        <div style="grid-column: 1 / -1; text-align: center; padding: 3rem; color: var(--text-muted);">
-          <h3>No prompts configured yet.</h3>
-          <button class="btn btn-primary" style="margin-top: 1rem;" onclick="document.getElementById('nav-btn-setup').click()">
-            Go to Setup
-          </button>
+      card.innerHTML = `
+        <div class="card-top-info">
+          <div class="card-prompt-number" style="color: ${theme.primary};">${idx + 1}</div>
+          <div class="card-prompt-title" title="${this.escapeHTML(prompt.text)}">${this.escapeHTML(prompt.text)}</div>
         </div>
+        <div class="card-svg-wrapper"></div>
       `;
+
+      const svgWrapper = card.querySelector('.card-svg-wrapper');
+      const ratings = this.state.ratings[prompt.id] || {};
+      const svg = this.miniGraphRenderer.renderSVG(
+        prompt,
+        idx,
+        this.state.participants,
+        ratings,
+        { compact: true, isInteractive: false }
+      );
+      svgWrapper.appendChild(svg);
+
+      this.allGraphsGrid.appendChild(card);
+    });
+  }
+
+  /* ------------------------------------------------------------------------
+   * B. PARTICIPANT / PHONE FLOW
+   * ------------------------------------------------------------------------ */
+
+  initParticipantFlow() {
+    this.hostHeader.style.display = 'none';
+    this.paxHeader.style.display = 'flex';
+    this.paxJoinRoomCode.textContent = this.roomCode || 'ROOM';
+    this.paxHeaderRoomTitle.textContent = `Room: ${this.roomCode || ''}`;
+
+    // Connect to room network
+    this.network = new RoomNetwork(this.roomTopic, (msg) => this.handlePaxIncomingMessage(msg));
+
+    // Check if participant already entered name
+    if (this.paxId && this.paxName) {
+      this.paxDisplayName.textContent = this.paxName;
+      this.paxBadgePreview.textContent = this.paxCode;
+      this.network.publish({ type: 'pax_join', paxId: this.paxId, name: this.paxName, code: this.paxCode });
+      this.switchPaxView('waiting');
+    } else {
+      this.switchPaxView('join');
+    }
+
+    // Ping host for latest state
+    this.network.publish({ type: 'pax_hello', paxId: this.paxId });
+  }
+
+  switchPaxView(view) {
+    this.viewPaxJoin.classList.toggle('active', view === 'join');
+    this.viewPaxWaiting.classList.toggle('active', view === 'waiting');
+    this.viewPaxRate.classList.toggle('active', view === 'rate');
+    this.viewPaxResults.classList.toggle('active', view === 'results');
+  }
+
+  handlePaxJoinConfirm() {
+    const raw = this.inputPaxName.value.trim();
+    if (!raw) {
+      alert('Please enter your name.');
       return;
     }
+
+    this.paxName = raw;
+    this.paxId = `pax_${Date.now().toString(36)}_${Math.random().toString(36).substring(2, 6)}`;
+    this.paxCode = raw.replace(/[^a-zA-Z0-9]/g, '').substring(0, 3).toUpperCase() || 'PAX';
+
+    sessionStorage.setItem('mentoring_pax_id', this.paxId);
+    sessionStorage.setItem('mentoring_pax_name', this.paxName);
+    sessionStorage.setItem('mentoring_pax_code', this.paxCode);
+
+    this.paxDisplayName.textContent = this.paxName;
+    this.paxBadgePreview.textContent = this.paxCode;
+
+    // Send join message to host
+    this.network.publish({
+      type: 'pax_join',
+      paxId: this.paxId,
+      name: this.paxName,
+      code: this.paxCode
+    });
+
+    this.switchPaxView('waiting');
+  }
+
+  handlePaxIncomingMessage(msg) {
+    if (!msg || typeof msg !== 'object') return;
+
+    if (msg.type === 'host_sync') {
+      this.handlePaxReceivedHostSync(msg);
+    }
+  }
+
+  handlePaxReceivedHostSync(sync) {
+    // Sync state locally
+    if (Array.isArray(sync.prompts)) this.state.prompts = sync.prompts;
+    if (Array.isArray(sync.participants)) this.state.participants = sync.participants;
+    if (sync.ratings) this.state.ratings = sync.ratings;
+
+    if (!this.paxId) {
+      // Haven't joined yet
+      return;
+    }
+
+    if (sync.status === 'waiting') {
+      this.switchPaxView('waiting');
+    } else if (sync.status === 'active') {
+      this.renderPaxPromptRating(sync.promptIndex);
+    } else if (sync.status === 'finished') {
+      this.renderPaxResultsScreen();
+    }
+  }
+
+  renderPaxPromptRating(promptIndex) {
+    const prompt = this.state.prompts[promptIndex];
+    if (!prompt) return;
+
+    this.activePromptIndex = promptIndex;
+    const theme = getGraphTheme(promptIndex);
+    const total = this.state.prompts.length;
+
+    this.paxRateTag.textContent = `Activity ${promptIndex + 1} of ${total}`;
+    this.paxRateTag.style.backgroundColor = theme.fill;
+    this.paxRateTag.style.color = theme.primary;
+    this.paxRatePromptText.textContent = prompt.text;
+    this.paxBadgePreview.style.backgroundColor = theme.primary;
+
+    // Check if participant already voted for this prompt
+    const existingVote = this.state.ratings[prompt.id]?.[this.paxId];
+    if (existingVote) {
+      this.paxSliderGood.value = existingVote.good;
+      this.paxSliderFun.value = existingVote.fun;
+      this.paxValGood.textContent = existingVote.good.toFixed(1);
+      this.paxValFun.textContent = existingVote.fun.toFixed(1);
+      this.paxSubmitStatus.style.display = 'block';
+      this.btnPaxSubmitVote.textContent = 'Update Rating ✓';
+    } else {
+      this.paxSliderGood.value = 5.0;
+      this.paxSliderFun.value = 5.0;
+      this.paxValGood.textContent = '5.0';
+      this.paxValFun.textContent = '5.0';
+      this.paxSubmitStatus.style.display = 'none';
+      this.btnPaxSubmitVote.textContent = 'Submit Rating ✓';
+    }
+
+    this.switchPaxView('rate');
+  }
+
+  handlePaxSubmitVote() {
+    const prompt = this.state.prompts[this.activePromptIndex];
+    if (!prompt) return;
+
+    const good = parseFloat(this.paxSliderGood.value);
+    const fun = parseFloat(this.paxSliderFun.value);
+
+    // Save locally
+    this.state.setRating(prompt.id, this.paxId, good, fun);
+
+    // Publish to host
+    this.network.publish({
+      type: 'pax_vote',
+      paxId: this.paxId,
+      promptId: prompt.id,
+      promptIndex: this.activePromptIndex,
+      good,
+      fun
+    });
+
+    this.paxSubmitStatus.style.display = 'block';
+    this.btnPaxSubmitVote.textContent = 'Rating Saved ✓';
+  }
+
+  renderPaxResultsScreen() {
+    this.paxGraphsGrid.innerHTML = '';
 
     this.state.prompts.forEach((prompt, idx) => {
       const theme = getGraphTheme(idx);
@@ -602,30 +742,21 @@ class MentoringMatrixApp {
         <div class="card-svg-wrapper"></div>
       `;
 
-      // Render mini SVG graph for this prompt
       const svgWrapper = card.querySelector('.card-svg-wrapper');
       const ratings = this.state.ratings[prompt.id] || {};
-
       const svg = this.miniGraphRenderer.renderSVG(
         prompt,
         idx,
         this.state.participants,
         ratings,
-        {
-          compact: true,
-          isInteractive: false
-        }
+        { compact: true, isInteractive: false }
       );
       svgWrapper.appendChild(svg);
 
-      // Clicking any card navigates to Rate mode for that specific prompt
-      card.addEventListener('click', () => {
-        this.activePromptIndex = idx;
-        this.switchView('rate');
-      });
-
-      this.allGraphsGrid.appendChild(card);
+      this.paxGraphsGrid.appendChild(card);
     });
+
+    this.switchPaxView('results');
   }
 
   escapeHTML(str) {
