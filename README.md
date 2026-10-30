@@ -83,3 +83,4 @@ Open `http://localhost:3000` in your web browser.
 ### 2. Vercel / Netlify
 - Connect your GitHub repository to Vercel or Netlify.
 - Deploy with default settings (zero configuration required).
+

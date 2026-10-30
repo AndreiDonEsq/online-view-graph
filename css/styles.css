@@ -251,19 +251,24 @@ main.container {
 .participant-pill {
   display: inline-flex;
   align-items: center;
-  gap: 0.4rem;
-  padding: 0.3rem 0.7rem;
+  gap: 0.45rem;
+  padding: 0.35rem 0.75rem;
   border-radius: 999px;
-  background: #f1f5f9;
+  background: #ffffff;
   font-size: 0.82rem;
   font-weight: 600;
   border: 1px solid var(--border-color);
+  box-shadow: 0 1px 2px rgba(0,0,0,0.04);
 }
 
-.pill-dot {
-  width: 12px;
-  height: 12px;
-  border-radius: 50%;
+.pill-code-badge {
+  background: #0f172a;
+  color: #ffffff;
+  font-size: 0.75rem;
+  font-weight: 800;
+  padding: 0.15rem 0.45rem;
+  border-radius: 4px;
+  letter-spacing: 0.5px;
 }
 
 /* -------------------------------------------------------------
@@ -288,11 +293,9 @@ main.container {
 
 .prompt-tag {
   display: inline-block;
-  background: #e0e7ff;
-  color: #4338ca;
   font-weight: 700;
   font-size: 0.75rem;
-  padding: 0.15rem 0.5rem;
+  padding: 0.15rem 0.55rem;
   border-radius: var(--radius-sm);
   margin-bottom: 0.25rem;
   text-transform: uppercase;
@@ -306,7 +309,7 @@ main.container {
 
 .rate-grid-layout {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: 1.15fr 0.85fr;
   gap: 1.5rem;
 }
 
@@ -362,7 +365,7 @@ main.container {
 .participant-select-btn {
   display: inline-flex;
   align-items: center;
-  gap: 0.35rem;
+  gap: 0.4rem;
   padding: 0.35rem 0.75rem;
   border-radius: 999px;
   background: #f8fafc;
@@ -374,9 +377,15 @@ main.container {
 }
 
 .participant-select-btn.active {
-  background: #eef2ff;
-  border-color: #4f46e5;
-  box-shadow: 0 0 0 2px rgba(79, 70, 229, 0.2);
+  background: #0f172a;
+  color: #ffffff;
+  border-color: #0f172a;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+}
+
+.participant-select-btn.active .pill-code-badge {
+  background: #ffffff;
+  color: #0f172a;
 }
 
 /* Sliders List */
@@ -390,8 +399,9 @@ main.container {
 }
 
 .participant-slider-card.active {
-  border-color: var(--primary);
+  border-color: #0f172a;
   background: #ffffff;
+  box-shadow: 0 0 0 1px #0f172a;
 }
 
 .slider-card-header {
@@ -418,12 +428,11 @@ main.container {
 
 .slider-control input[type="range"] {
   width: 100%;
-  accent-color: var(--primary);
   cursor: pointer;
 }
 
 /* -------------------------------------------------------------
-   3. OVERVIEW / ALL GRAPHS GRID (Reproducing the User Sketch)
+   3. OVERVIEW / ALL GRAPHS GRID (Reproducing User Sketch)
    ------------------------------------------------------------- */
 .overview-topbar {
   background: #ffffff;
@@ -495,10 +504,9 @@ main.container {
 }
 
 .card-prompt-number {
-  font-size: 1.3rem;
-  font-weight: 800;
-  color: #0f172a;
-  min-width: 1.8rem;
+  font-size: 1.4rem;
+  font-weight: 900;
+  min-width: 2rem;
 }
 
 .card-prompt-title {
@@ -559,25 +567,55 @@ main.container {
   font-weight: 700;
 }
 
-/* Fullscreen Presentation Mode */
+/* -------------------------------------------------------------
+   4. FULLSCREEN PRESENTATION MODE
+   ------------------------------------------------------------- */
+.floating-exit-presentation-btn {
+  display: none;
+  position: fixed;
+  top: 1rem;
+  right: 1.5rem;
+  z-index: 9999;
+  background: #0f172a;
+  color: #ffffff;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+  font-size: 0.9rem;
+  font-weight: 700;
+  padding: 0.6rem 1.1rem;
+  border-radius: 999px;
+  cursor: pointer;
+  align-items: center;
+  gap: 0.5rem;
+  transition: transform 0.15s, background-color 0.15s;
+}
+
+.floating-exit-presentation-btn:hover {
+  background: #1e293b;
+  transform: scale(1.05);
+}
+
+body.presentation-mode .floating-exit-presentation-btn {
+  display: inline-flex !important;
+}
+
 body.presentation-mode .app-header,
-body.presentation-mode .overview-top-row .btn-secondary,
-body.presentation-mode .overview-top-row .btn-danger {
+body.presentation-mode .overview-topbar {
   display: none !important;
 }
 
 body.presentation-mode main.container {
   max-width: 100% !important;
-  padding: 1rem !important;
+  padding: 1rem 1.5rem !important;
 }
 
 body.presentation-mode .prompt-graphs-grid {
   grid-template-columns: repeat(3, 1fr);
-  gap: 1rem;
+  gap: 1.25rem;
 }
 
 @media print {
-  .app-header, .overview-topbar, .btn {
+  .app-header, .overview-topbar, .btn, .floating-exit-presentation-btn {
     display: none !important;
   }
   .prompt-graphs-grid {

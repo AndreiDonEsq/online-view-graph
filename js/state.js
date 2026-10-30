@@ -2,35 +2,34 @@
  * state.js
  * 
  * Manages the application state, local storage persistence,
- * participant color assignments, and pub/sub updates.
+ * graph themes (color per graph/prompt), and participant 3-letter codes.
  */
 
-// Distinct, vibrant color palette for participant identification
-export const PARTICIPANT_PALETTE = [
-  '#ef4444', // Red / Crimson
-  '#3b82f6', // Bright Blue
-  '#10b981', // Emerald Green
-  '#f59e0b', // Amber / Orange
-  '#8b5cf6', // Violet
-  '#ec4899', // Pink
-  '#06b6d4', // Cyan
-  '#84cc16', // Lime
-  '#6366f1', // Indigo
-  '#f97316', // Bright Orange
-  '#14b8a6', // Teal
-  '#a855f7', // Purple
-  '#e11d48', // Rose
-  '#0284c7', // Sky Blue
-  '#059669', // Dark Emerald
-  '#d97706'  // Ochre
+// Distinct theme colors for each individual graph (Prompt 1 = Red, Prompt 2 = Blue, etc.)
+// Directly matching the workshop sketch.
+export const GRAPH_THEMES = [
+  { id: 1, name: 'Red',    primary: '#ef4444', fill: 'rgba(239, 68, 68, 0.12)', stroke: 'rgba(239, 68, 68, 0.55)' },
+  { id: 2, name: 'Blue',   primary: '#3b82f6', fill: 'rgba(59, 130, 246, 0.12)', stroke: 'rgba(59, 130, 246, 0.55)' },
+  { id: 3, name: 'Cyan',   primary: '#06b6d4', fill: 'rgba(6, 182, 212, 0.12)', stroke: 'rgba(6, 182, 212, 0.55)' },
+  { id: 4, name: 'Green',  primary: '#10b981', fill: 'rgba(16, 185, 129, 0.12)', stroke: 'rgba(16, 185, 129, 0.55)' },
+  { id: 5, name: 'Maroon', primary: '#991b1b', fill: 'rgba(153, 27, 27, 0.12)', stroke: 'rgba(153, 27, 27, 0.55)' },
+  { id: 6, name: 'Purple', primary: '#8b5cf6', fill: 'rgba(139, 92, 246, 0.12)', stroke: 'rgba(139, 92, 246, 0.55)' },
+  { id: 7, name: 'Amber',  primary: '#f59e0b', fill: 'rgba(245, 158, 11, 0.12)', stroke: 'rgba(245, 158, 11, 0.55)' },
+  { id: 8, name: 'Pink',   primary: '#ec4899', fill: 'rgba(236, 72, 153, 0.12)', stroke: 'rgba(236, 72, 153, 0.55)' },
+  { id: 9, name: 'Teal',   primary: '#0d9488', fill: 'rgba(13, 148, 136, 0.12)', stroke: 'rgba(13, 148, 136, 0.55)' },
+  { id: 10, name: 'Indigo', primary: '#6366f1', fill: 'rgba(99, 102, 241, 0.12)', stroke: 'rgba(99, 102, 241, 0.55)' }
 ];
 
-const STORAGE_KEY = 'mentoring_activity_matrix_state_v1';
+export function getGraphTheme(index) {
+  return GRAPH_THEMES[index % GRAPH_THEMES.length];
+}
+
+const STORAGE_KEY = 'mentoring_activity_matrix_state_v2';
 
 export class AppState {
   constructor() {
     this.prompts = [];        // [{ id: 1, text: 'Activity description' }]
-    this.participants = [];   // [{ id: 'p1', name: 'Alice', initial: 'A', color: '#...' }]
+    this.participants = [];   // [{ id: 'p1', name: 'Alice', code: 'ALI' }]
     this.ratings = {};        // { [promptId]: { [participantId]: { good: 7, fun: 8 } } }
     this.activePromptId = null;
     this.activeParticipantId = null;
@@ -39,11 +38,6 @@ export class AppState {
     this.loadFromStorage();
   }
 
-  /**
-   * Subscribe to state change notifications.
-   * @param {Function} callback 
-   * @returns {Function} Unsubscribe function
-   */
   subscribe(callback) {
     this.subscribers.add(callback);
     return () => this.subscribers.delete(callback);
@@ -60,9 +54,6 @@ export class AppState {
     }
   }
 
-  /**
-   * Save current state to browser localStorage.
-   */
   saveToStorage() {
     try {
       const data = {
@@ -78,16 +69,19 @@ export class AppState {
     }
   }
 
-  /**
-   * Load saved session from browser localStorage.
-   */
   loadFromStorage() {
     try {
       const raw = localStorage.getItem(STORAGE_KEY);
       if (!raw) return;
       const data = JSON.parse(raw);
       if (Array.isArray(data.prompts)) this.prompts = data.prompts;
-      if (Array.isArray(data.participants)) this.participants = data.participants;
+      if (Array.isArray(data.participants)) {
+        // Ensure 3-letter codes exist
+        this.participants = data.participants.map((p, idx) => ({
+          ...p,
+          code: p.code || p.name.replace(/[^a-zA-Z0-9]/g, '').substring(0, 3).toUpperCase() || `P${idx+1}`
+        }));
+      }
       if (data.ratings && typeof data.ratings === 'object') this.ratings = data.ratings;
       this.activePromptId = data.activePromptId || (this.prompts[0]?.id ?? null);
       this.activeParticipantId = data.activeParticipantId || (this.participants[0]?.id ?? null);
@@ -96,9 +90,6 @@ export class AppState {
     }
   }
 
-  /**
-   * Clear all stored session data.
-   */
   resetAll() {
     this.prompts = [];
     this.participants = [];
@@ -109,10 +100,6 @@ export class AppState {
     this.notify();
   }
 
-  /**
-   * Set the list of prompts (activities to rate).
-   * @param {Array<string>} promptTexts 
-   */
   setPrompts(promptTexts) {
     this.prompts = promptTexts
       .map(t => t.trim())
@@ -128,10 +115,6 @@ export class AppState {
     this.notify();
   }
 
-  /**
-   * Add a new prompt.
-   * @param {string} text 
-   */
   addPrompt(text) {
     const trimmed = text.trim();
     if (!trimmed) return;
@@ -142,31 +125,21 @@ export class AppState {
   }
 
   /**
-   * Set participant names. Automatically generates initials and distinct colors.
+   * Set participant names. Automatically generates first 3-letter code (e.g. 'AND', 'ELE').
    * @param {Array<string>} names 
    */
   setParticipants(names) {
     const cleanNames = names.map(n => n.trim()).filter(n => n.length > 0);
-    
-    // Track initials to resolve duplicates if needed (e.g. A vs An)
-    const initialCounts = {};
-    cleanNames.forEach(n => {
-      const init = n.charAt(0).toUpperCase();
-      initialCounts[init] = (initialCounts[init] || 0) + 1;
-    });
 
     this.participants = cleanNames.map((name, idx) => {
-      let initial = name.charAt(0).toUpperCase();
-      // If multiple people share the same initial, use first 2 chars
-      if (initialCounts[initial] > 1 && name.length >= 2) {
-        initial = name.substring(0, 2).toUpperCase();
-      }
+      // First 3 alphanumeric characters
+      let code = name.replace(/[^a-zA-Z0-9]/g, '').substring(0, 3).toUpperCase();
+      if (!code) code = `P${idx + 1}`;
 
       return {
         id: `p_${idx + 1}`,
         name,
-        initial,
-        color: PARTICIPANT_PALETTE[idx % PARTICIPANT_PALETTE.length]
+        code
       };
     });
 
@@ -176,20 +149,11 @@ export class AppState {
     this.notify();
   }
 
-  /**
-   * Record or update a participant's rating for a specific prompt.
-   * 
-   * @param {number} promptId 
-   * @param {string} participantId 
-   * @param {number} good - Rating from 1 to 10 for Useful / Good
-   * @param {number} fun  - Rating from 1 to 10 for Fun
-   */
   setRating(promptId, participantId, good, fun) {
     if (!this.ratings[promptId]) {
       this.ratings[promptId] = {};
     }
 
-    // Clamp values between 1 and 10, round to 1 decimal place
     const clampedGood = Math.max(1, Math.min(10, Math.round(good * 10) / 10));
     const clampedFun = Math.max(1, Math.min(10, Math.round(fun * 10) / 10));
 
@@ -201,9 +165,6 @@ export class AppState {
     this.notify();
   }
 
-  /**
-   * Delete rating for a participant on a prompt.
-   */
   removeRating(promptId, participantId) {
     if (this.ratings[promptId] && this.ratings[promptId][participantId]) {
       delete this.ratings[promptId][participantId];
@@ -211,19 +172,13 @@ export class AppState {
     }
   }
 
-  /**
-   * Retrieve rating for a specific prompt and participant.
-   */
   getRating(promptId, participantId) {
     return this.ratings[promptId]?.[participantId] || null;
   }
 
-  /**
-   * Export the entire state as a downloadable JSON object.
-   */
   exportJSON() {
     return JSON.stringify({
-      version: '1.0',
+      version: '2.0',
       exportedAt: new Date().toISOString(),
       prompts: this.prompts,
       participants: this.participants,
@@ -231,16 +186,16 @@ export class AppState {
     }, null, 2);
   }
 
-  /**
-   * Import state from a JSON string.
-   */
   importJSON(jsonString) {
     const data = JSON.parse(jsonString);
     if (!Array.isArray(data.prompts) || !Array.isArray(data.participants)) {
       throw new Error('Invalid JSON format: missing prompts or participants.');
     }
     this.prompts = data.prompts;
-    this.participants = data.participants;
+    this.participants = data.participants.map((p, idx) => ({
+      ...p,
+      code: p.code || p.name.replace(/[^a-zA-Z0-9]/g, '').substring(0, 3).toUpperCase() || `P${idx+1}`
+    }));
     this.ratings = data.ratings || {};
     this.activePromptId = this.prompts[0]?.id ?? null;
     this.activeParticipantId = this.participants[0]?.id ?? null;

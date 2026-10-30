@@ -6,7 +6,7 @@
  * and data synchronization.
  */
 
-import { AppState } from './state.js';
+import { AppState, getGraphTheme } from './state.js';
 import { GraphRenderer } from './graph.js';
 
 class MentoringMatrixApp {
@@ -38,6 +38,9 @@ class MentoringMatrixApp {
    * Cache references to key DOM elements.
    */
   initDOMElements() {
+    // Floating Exit Presentation Mode Button
+    this.btnFloatingExitPresentation = document.getElementById('btn-floating-exit-presentation');
+
     // Nav buttons
     this.navBtnSetup = document.getElementById('nav-btn-setup');
     this.navBtnRate = document.getElementById('nav-btn-rate');
@@ -96,6 +99,24 @@ class MentoringMatrixApp {
     this.navBtnRate.addEventListener('click', () => this.switchView('rate'));
     this.navBtnOverview.addEventListener('click', () => this.switchView('overview'));
 
+    // Presentation Mode toggle & exit
+    this.btnTogglePresentation.addEventListener('click', () => {
+      document.body.classList.toggle('presentation-mode');
+    });
+
+    if (this.btnFloatingExitPresentation) {
+      this.btnFloatingExitPresentation.addEventListener('click', () => {
+        document.body.classList.remove('presentation-mode');
+      });
+    }
+
+    // Keyboard 'Escape' key exits presentation mode easily
+    window.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && document.body.classList.contains('presentation-mode')) {
+        document.body.classList.remove('presentation-mode');
+      }
+    });
+
     // Setup actions
     this.btnApplyNumPrompts.addEventListener('click', () => {
       const count = parseInt(this.inputNumPrompts.value, 10) || 1;
@@ -119,12 +140,7 @@ class MentoringMatrixApp {
     this.btnViewGraphsShortcut.addEventListener('click', () => this.switchView('overview'));
 
     // Overview actions
-    this.btnTogglePresentation.addEventListener('click', () => {
-      document.body.classList.toggle('presentation-mode');
-    });
-
     this.btnPrint.addEventListener('click', () => window.print());
-
     this.btnOverviewEdit.addEventListener('click', () => this.switchView('rate'));
 
     this.btnResetSession.addEventListener('click', () => {
@@ -258,7 +274,7 @@ class MentoringMatrixApp {
   }
 
   /**
-   * Parse participant names from the textarea and render live preview pills.
+   * Parse participant names from the textarea and render live preview pills with 3-letter codes.
    */
   updateParticipantsPreview() {
     const raw = this.textareaParticipants.value;
@@ -266,24 +282,15 @@ class MentoringMatrixApp {
     this.participantsPreviewPills.innerHTML = '';
 
     names.forEach((name, idx) => {
+      const code = name.replace(/[^a-zA-Z0-9]/g, '').substring(0, 3).toUpperCase() || `P${idx + 1}`;
       const pill = document.createElement('div');
       pill.className = 'participant-pill';
-      const initial = name.charAt(0).toUpperCase();
       pill.innerHTML = `
-        <span class="pill-dot" style="background-color: ${this.getPaletteColor(idx)};"></span>
-        <span><strong>${initial}</strong> - ${this.escapeHTML(name)}</span>
+        <span class="pill-code-badge">${code}</span>
+        <span>${this.escapeHTML(name)}</span>
       `;
       this.participantsPreviewPills.appendChild(pill);
     });
-  }
-
-  getPaletteColor(idx) {
-    const palette = [
-      '#ef4444', '#3b82f6', '#10b981', '#f59e0b',
-      '#8b5cf6', '#ec4899', '#06b6d4', '#84cc16',
-      '#6366f1', '#f97316', '#14b8a6', '#a855f7'
-    ];
-    return palette[idx % palette.length];
   }
 
   /**
@@ -336,21 +343,27 @@ class MentoringMatrixApp {
       return this.renderRateScreen();
     }
 
-    // Header info
+    // Theme color for this active graph
+    const theme = getGraphTheme(this.activePromptIndex);
+
+    // Header info matching graph theme color
     this.ratePromptTag.textContent = `Activity ${this.activePromptIndex + 1} of ${this.state.prompts.length}`;
+    this.ratePromptTag.style.backgroundColor = theme.fill;
+    this.ratePromptTag.style.color = theme.primary;
+    this.ratePromptTag.style.border = `1px solid ${theme.stroke}`;
     this.ratePromptTitle.textContent = prompt.text;
 
     // Quick participant selection bar
-    this.renderQuickParticipantBar();
+    this.renderQuickParticipantBar(theme);
 
     // Render interactive SVG Graph
-    this.renderInteractiveGraph(prompt);
+    this.renderInteractiveGraph(prompt, theme);
 
     // Render Sliders List
-    this.renderParticipantSliders(prompt);
+    this.renderParticipantSliders(prompt, theme);
   }
 
-  renderQuickParticipantBar() {
+  renderQuickParticipantBar(theme) {
     this.quickParticipantBar.innerHTML = '';
     const participants = this.state.participants;
 
@@ -361,10 +374,20 @@ class MentoringMatrixApp {
     participants.forEach(p => {
       const btn = document.createElement('button');
       btn.type = 'button';
-      btn.className = `participant-select-btn ${p.id === this.activeParticipantId ? 'active' : ''}`;
+      const isActive = p.id === this.activeParticipantId;
+      btn.className = `participant-select-btn ${isActive ? 'active' : ''}`;
+
+      if (isActive) {
+        btn.style.backgroundColor = theme.primary;
+        btn.style.borderColor = theme.primary;
+      } else {
+        btn.style.backgroundColor = '';
+        btn.style.borderColor = '';
+      }
+
       btn.innerHTML = `
-        <span class="pill-dot" style="background-color: ${p.color};"></span>
-        <span>${p.initial} - ${this.escapeHTML(p.name)}</span>
+        <span class="pill-code-badge" style="${isActive ? 'background:#ffffff; color:' + theme.primary : 'background:' + theme.primary + '; color:#ffffff'}">${p.code}</span>
+        <span>${this.escapeHTML(p.name)}</span>
       `;
       btn.addEventListener('click', () => {
         this.activeParticipantId = p.id;
@@ -374,12 +397,13 @@ class MentoringMatrixApp {
     });
   }
 
-  renderInteractiveGraph(prompt) {
+  renderInteractiveGraph(prompt, theme) {
     this.interactiveGraphContainer.innerHTML = '';
 
     const ratings = this.state.ratings[prompt.id] || {};
     const svg = this.graphRenderer.renderSVG(
       prompt,
+      this.activePromptIndex,
       this.state.participants,
       ratings,
       {
@@ -439,7 +463,7 @@ class MentoringMatrixApp {
     this.interactiveGraphContainer.appendChild(svg);
   }
 
-  renderParticipantSliders(prompt) {
+  renderParticipantSliders(prompt, theme) {
     this.participantSlidersList.innerHTML = '';
     const participants = this.state.participants;
     const promptRatings = this.state.ratings[prompt.id] || {};
@@ -453,15 +477,20 @@ class MentoringMatrixApp {
 
       const goodVal = rating ? rating.good : 5.0;
       const funVal = rating ? rating.fun : 5.0;
+      const isActive = p.id === this.activeParticipantId;
 
       const card = document.createElement('div');
-      card.className = `participant-slider-card ${p.id === this.activeParticipantId ? 'active' : ''}`;
+      card.className = `participant-slider-card ${isActive ? 'active' : ''}`;
+      if (isActive) {
+        card.style.borderColor = theme.primary;
+        card.style.boxShadow = `0 0 0 1px ${theme.primary}`;
+      }
 
       card.innerHTML = `
         <div class="slider-card-header">
           <div style="display: flex; align-items: center; gap: 0.5rem;">
-            <span class="pill-dot" style="background-color: ${p.color};"></span>
-            <strong>${p.initial} - ${this.escapeHTML(p.name)}</strong>
+            <span class="pill-code-badge" style="background-color: ${theme.primary};">${p.code}</span>
+            <strong>${this.escapeHTML(p.name)}</strong>
           </div>
           <div>
             ${hasRating ? `
@@ -476,28 +505,27 @@ class MentoringMatrixApp {
           <div class="slider-control">
             <label>
               <span>Good / Useful:</span>
-              <strong class="good-val-badge">${hasRating ? goodVal : '-'}</strong>
+              <strong class="good-val-badge" style="color: ${theme.primary};">${hasRating ? goodVal : '-'}</strong>
             </label>
-            <input type="range" class="range-good" min="1" max="10" step="0.5" value="${goodVal}">
+            <input type="range" class="range-good" min="1" max="10" step="0.5" value="${goodVal}" style="accent-color: ${theme.primary};">
           </div>
           <!-- Fun Slider -->
           <div class="slider-control">
             <label>
               <span>Fun:</span>
-              <strong class="fun-val-badge">${hasRating ? funVal : '-'}</strong>
+              <strong class="fun-val-badge" style="color: ${theme.primary};">${hasRating ? funVal : '-'}</strong>
             </label>
-            <input type="range" class="range-fun" min="1" max="10" step="0.5" value="${funVal}">
+            <input type="range" class="range-fun" min="1" max="10" step="0.5" value="${funVal}" style="accent-color: ${theme.primary};">
           </div>
         </div>
       `;
 
-      // Select participant when clicking their slider card
       card.addEventListener('click', (e) => {
         if (!e.target.closest('input') && !e.target.closest('button')) {
           this.activeParticipantId = p.id;
-          this.renderQuickParticipantBar();
-          this.renderParticipantSliders(prompt);
-          this.renderInteractiveGraph(prompt);
+          this.renderQuickParticipantBar(theme);
+          this.renderParticipantSliders(prompt, theme);
+          this.renderInteractiveGraph(prompt, theme);
         }
       });
 
@@ -533,14 +561,14 @@ class MentoringMatrixApp {
    * ------------------------------------------------------------------------ */
 
   renderOverviewScreen() {
-    // 1. Participant Legend Bar
+    // 1. Participant Legend Bar (Showing 3-letter codes)
     this.overviewLegendPills.innerHTML = '';
     this.state.participants.forEach(p => {
       const pill = document.createElement('div');
       pill.className = 'participant-pill';
       pill.innerHTML = `
-        <span class="pill-dot" style="background-color: ${p.color};"></span>
-        <span><strong>${p.initial}</strong> - ${this.escapeHTML(p.name)}</span>
+        <span class="pill-code-badge">${p.code}</span>
+        <span>${this.escapeHTML(p.name)}</span>
       `;
       this.overviewLegendPills.appendChild(pill);
     });
@@ -561,12 +589,14 @@ class MentoringMatrixApp {
     }
 
     this.state.prompts.forEach((prompt, idx) => {
+      const theme = getGraphTheme(idx);
       const card = document.createElement('div');
       card.className = 'prompt-graph-card';
+      card.style.borderTop = `4px solid ${theme.primary}`;
 
       card.innerHTML = `
         <div class="card-top-info">
-          <div class="card-prompt-number">${idx + 1}</div>
+          <div class="card-prompt-number" style="color: ${theme.primary};">${idx + 1}</div>
           <div class="card-prompt-title" title="${this.escapeHTML(prompt.text)}">${this.escapeHTML(prompt.text)}</div>
         </div>
         <div class="card-svg-wrapper"></div>
@@ -578,6 +608,7 @@ class MentoringMatrixApp {
 
       const svg = this.miniGraphRenderer.renderSVG(
         prompt,
+        idx,
         this.state.participants,
         ratings,
         {
