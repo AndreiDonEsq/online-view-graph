@@ -51,7 +51,7 @@
     <!-- ========================================================
          HOST VIEW 1: SETUP SCREEN (Create Room with Prompts)
          ======================================================== -->
-    <section id="view-setup" class="view-panel host-panel active">
+    <section id="view-setup" class="view-panel host-panel">
       <div class="setup-card">
         <div class="setup-hero">
           <h1>Mentoring Activities Workshop</h1>
@@ -79,6 +79,7 @@
           <button type="button" id="btn-offline-mode" class="btn btn-secondary btn-sm" title="Run without room / manual input">
             Manual Facilitator Entry Mode
           </button>
+          <button type="button" id="btn-refresh-everything" class="btn btn-danger">Refresh Everything</button>
           <button type="button" id="btn-create-room" class="btn btn-primary btn-lg" style="font-size: 1.1rem; padding: 0.85rem 1.6rem;">
             🚀 Create Live Room & Get Join Link
           </button>
@@ -228,6 +229,7 @@
       <div class="setup-card" style="max-width: 480px; text-align: center; margin-top: 2rem;">
         <div class="brand-icon" style="width: 54px; height: 54px; font-size: 1.8rem; margin: 0 auto 1rem auto;">M</div>
         <h2 style="font-size: 1.6rem; font-weight: 800; margin-bottom: 0.25rem;">Join Room</h2>
+        <p id="pax-disconnected-message" role="status" hidden>The facilitator refreshed the room. You have been disconnected. Open the new room link to join again.</p>
         <p style="color: var(--text-muted); font-size: 0.9rem; margin-bottom: 1.75rem;">
           Room: <strong id="pax-join-room-code" style="color: var(--primary);">-----</strong>
         </p>

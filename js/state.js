@@ -27,7 +27,8 @@ export function getGraphTheme(index) {
 const STORAGE_KEY = 'mentoring_activity_matrix_state_v2';
 
 export class AppState {
-  constructor() {
+  constructor(storageKey = STORAGE_KEY) {
+    this.storageKey = storageKey;
     this.prompts = [];        // [{ id: 1, text: 'Activity description' }]
     this.participants = [];   // [{ id: 'p1', name: 'Alice', code: 'ALI' }]
     this.ratings = {};        // { [promptId]: { [participantId]: { good: 7, fun: 8 } } }
@@ -63,7 +64,7 @@ export class AppState {
         activePromptId: this.activePromptId,
         activeParticipantId: this.activeParticipantId
       };
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+      localStorage.setItem(this.storageKey, JSON.stringify(data));
     } catch (e) {
       console.warn('Could not save state to localStorage:', e);
     }
@@ -71,7 +72,7 @@ export class AppState {
 
   loadFromStorage() {
     try {
-      const raw = localStorage.getItem(STORAGE_KEY);
+      const raw = localStorage.getItem(this.storageKey);
       if (!raw) return;
       const data = JSON.parse(raw);
       if (Array.isArray(data.prompts)) this.prompts = data.prompts;
@@ -96,7 +97,7 @@ export class AppState {
     this.ratings = {};
     this.activePromptId = null;
     this.activeParticipantId = null;
-    localStorage.removeItem(STORAGE_KEY);
+    localStorage.removeItem(this.storageKey);
     this.notify();
   }
 

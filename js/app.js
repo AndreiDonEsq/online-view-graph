@@ -15,7 +15,6 @@ import { RoomNetwork } from './network.js';
 
 class MentoringMatrixApp {
   constructor() {
-    this.state = new AppState();
     this.graphRenderer = new GraphRenderer({ width: 440, height: 380 });
     this.miniGraphRenderer = new GraphRenderer({ width: 340, height: 290 });
 
@@ -24,6 +23,9 @@ class MentoringMatrixApp {
     this.isParticipant = urlParams.has('room');
     this.roomTopic = urlParams.get('room') || null;
     this.roomCode = urlParams.get('code') || (this.roomTopic ? this.roomTopic.substring(0, 5).toUpperCase() : null);
+    this.state = this.isParticipant
+      ? new AppState(`mentoring_participant_state_${this.roomTopic}`)
+      : new AppState();
 
     // Host state
     this.hostStatus = 'setup'; // 'setup' | 'waiting' | 'active' | 'finished'
@@ -32,9 +34,10 @@ class MentoringMatrixApp {
     this.heartbeatTimer = null;
 
     // Participant state
-    this.paxId = sessionStorage.getItem('mentoring_pax_id') || null;
-    this.paxName = sessionStorage.getItem('mentoring_pax_name') || '';
-    this.paxCode = sessionStorage.getItem('mentoring_pax_code') || '';
+    this.paxStoragePrefix = `mentoring_pax_${this.roomTopic || 'host'}_`;
+    this.paxId = localStorage.getItem(`${this.paxStoragePrefix}id`) || sessionStorage.getItem(`${this.paxStoragePrefix}id`) || null;
+    this.paxName = localStorage.getItem(`${this.paxStoragePrefix}name`) || sessionStorage.getItem(`${this.paxStoragePrefix}name`) || '';
+    this.paxCode = localStorage.getItem(`${this.paxStoragePrefix}code`) || sessionStorage.getItem(`${this.paxStoragePrefix}code`) || '';
     this.paxSubmittedForPrompt = {}; // { [promptId]: true }
 
     this.initDOMElements();
@@ -79,6 +82,7 @@ class MentoringMatrixApp {
     this.btnAddPromptRow = document.getElementById('btn-add-prompt-row');
     this.promptsContainer = document.getElementById('prompts-input-container');
     this.btnCreateRoom = document.getElementById('btn-create-room');
+    this.btnRefreshEverything = document.getElementById('btn-refresh-everything');
     this.btnOfflineMode = document.getElementById('btn-offline-mode');
 
     // Host Waiting Room
@@ -152,8 +156,9 @@ class MentoringMatrixApp {
     }
 
     if (this.btnRestartRoom) {
-      this.btnRestartRoom.addEventListener('click', () => {
-        if (confirm('Start a fresh session? This will reset all current ratings.')) {
+      this.btnRestartRoom.addEventListener('click', async () => {
+        if (confirm('Start a fresh session? This will clear all participants and ratings.')) {
+          await this.refreshEverything();
           window.location.href = window.location.pathname;
         }
       });
@@ -176,6 +181,16 @@ class MentoringMatrixApp {
 
     if (this.btnCreateRoom) {
       this.btnCreateRoom.addEventListener('click', () => this.handleCreateRoom());
+    }
+    if (this.btnRefreshEverything) {
+      this.btnRefreshEverything.addEventListener('click', async () => {
+        this.btnRefreshEverything.disabled = true;
+        try {
+          await this.refreshEverything();
+        } finally {
+          this.btnRefreshEverything.disabled = false;
+        }
+      });
     }
 
     if (this.btnOfflineMode) {
@@ -289,7 +304,32 @@ class MentoringMatrixApp {
     }
   }
 
-  handleCreateRoom() {
+  async closeHostRoom() {
+    if (this.heartbeatTimer) clearInterval(this.heartbeatTimer);
+    this.heartbeatTimer = null;
+    const previousNetwork = this.network;
+    this.network = null;
+    if (previousNetwork) {
+      await previousNetwork.publish({ type: 'room_closed' });
+      previousNetwork.disconnect();
+    }
+  }
+
+  async refreshEverything() {
+    await this.closeHostRoom();
+    this.state.resetAll();
+    this.roomTopic = null;
+    this.roomCode = null;
+    this.hostStatus = 'setup';
+    this.activePromptIndex = 0;
+    this.displayRoomCode.textContent = '';
+    this.inputShareLink.value = '';
+    this.roomQrImage.removeAttribute('src');
+    this.renderJoinedPaxPills();
+    this.switchHostView('setup');
+  }
+
+  async handleCreateRoom() {
     const promptInputs = Array.from(this.promptsContainer.querySelectorAll('input.prompt-text-input'));
     const texts = promptInputs.map(inp => inp.value.trim()).filter(t => t.length > 0);
 
@@ -298,7 +338,12 @@ class MentoringMatrixApp {
       return;
     }
 
+    // A recreated room starts with no participants, ratings, or old connection.
+    await this.closeHostRoom();
+    this.state.resetAll();
     this.state.setPrompts(texts);
+    this.activePromptIndex = 0;
+    this.renderJoinedPaxPills();
 
     // Generate room code and unique topic
     this.roomCode = Math.random().toString(36).substring(2, 7).toUpperCase();
@@ -312,10 +357,12 @@ class MentoringMatrixApp {
     this.roomQrImage.src = `https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(joinUrl)}`;
 
     // Connect real-time pub-sub
-    this.network = new RoomNetwork(this.roomTopic, (msg) => this.handleHostIncomingMessage(msg));
+    const topic = this.roomTopic;
+    this.network = new RoomNetwork(topic, (msg) => {
+      if (this.network?.roomTopic === topic) this.handleHostIncomingMessage(msg);
+    });
 
     // Periodic state broadcast (heartbeat)
-    if (this.heartbeatTimer) clearInterval(this.heartbeatTimer);
     this.heartbeatTimer = setInterval(() => this.broadcastHostState(), 3500);
 
     this.broadcastHostState();
@@ -339,6 +386,7 @@ class MentoringMatrixApp {
   }
 
   handleHostIncomingMessage(msg) {
+    if (!this.network) return;
     if (!msg || typeof msg !== 'object') return;
 
     if (msg.type === 'pax_join') {
@@ -610,6 +658,9 @@ class MentoringMatrixApp {
 
     // Check if participant already entered name
     if (this.paxId && this.paxName) {
+      localStorage.setItem(`${this.paxStoragePrefix}id`, this.paxId);
+      localStorage.setItem(`${this.paxStoragePrefix}name`, this.paxName);
+      localStorage.setItem(`${this.paxStoragePrefix}code`, this.paxCode);
       this.paxDisplayName.textContent = this.paxName;
       this.paxBadgePreview.textContent = this.paxCode;
       this.network.publish({ type: 'pax_join', paxId: this.paxId, name: this.paxName, code: this.paxCode });
@@ -639,6 +690,7 @@ class MentoringMatrixApp {
   }
 
   handlePaxJoinConfirm() {
+    if (this.btnPaxConfirmJoin.disabled) return;
     const raw = this.inputPaxName.value.trim();
     if (!raw) {
       alert('Please enter your name.');
@@ -646,12 +698,16 @@ class MentoringMatrixApp {
     }
 
     this.paxName = raw;
-    this.paxId = `pax_${Date.now().toString(36)}_${Math.random().toString(36).substring(2, 6)}`;
+    this.paxId = this.paxId || localStorage.getItem(`${this.paxStoragePrefix}id`) ||
+      `pax_${Date.now().toString(36)}_${Math.random().toString(36).substring(2, 6)}`;
     this.paxCode = raw.replace(/[^a-zA-Z0-9]/g, '').substring(0, 3).toUpperCase() || 'PAX';
 
-    sessionStorage.setItem('mentoring_pax_id', this.paxId);
-    sessionStorage.setItem('mentoring_pax_name', this.paxName);
-    sessionStorage.setItem('mentoring_pax_code', this.paxCode);
+    sessionStorage.setItem(`${this.paxStoragePrefix}id`, this.paxId);
+    sessionStorage.setItem(`${this.paxStoragePrefix}name`, this.paxName);
+    sessionStorage.setItem(`${this.paxStoragePrefix}code`, this.paxCode);
+    localStorage.setItem(`${this.paxStoragePrefix}id`, this.paxId);
+    localStorage.setItem(`${this.paxStoragePrefix}name`, this.paxName);
+    localStorage.setItem(`${this.paxStoragePrefix}code`, this.paxCode);
 
     this.paxDisplayName.textContent = this.paxName;
     this.paxBadgePreview.textContent = this.paxCode;
@@ -669,6 +725,25 @@ class MentoringMatrixApp {
 
   handlePaxIncomingMessage(msg) {
     if (!msg || typeof msg !== 'object') return;
+
+    if (msg.type === 'room_closed') {
+      this.network.disconnect();
+      for (const key of ['id', 'name', 'code']) {
+        sessionStorage.removeItem(`${this.paxStoragePrefix}${key}`);
+        localStorage.removeItem(`${this.paxStoragePrefix}${key}`);
+      }
+      this.paxId = null;
+      this.paxName = '';
+      this.paxCode = '';
+      this.paxSubmittedForPrompt = {};
+      this.state.resetAll();
+      this.switchPaxView('join');
+      this.paxHeaderRoomTitle.textContent = 'Room Closed';
+      this.inputPaxName.disabled = true;
+      this.btnPaxConfirmJoin.disabled = true;
+      document.getElementById('pax-disconnected-message').hidden = false;
+      return;
+    }
 
     if (msg.type === 'host_sync') {
       this.handlePaxReceivedHostSync(msg);
@@ -699,6 +774,10 @@ class MentoringMatrixApp {
     const prompt = this.state.prompts[promptIndex];
     if (!prompt) return;
 
+    // Routine host syncs must not overwrite sliders the participant is editing.
+    const isEditingCurrentPrompt = this.viewPaxRate.classList.contains('active') &&
+      this.activePromptIndex === promptIndex;
+
     this.activePromptIndex = promptIndex;
     const theme = getGraphTheme(promptIndex);
     const total = this.state.prompts.length;
@@ -708,6 +787,8 @@ class MentoringMatrixApp {
     this.paxRateTag.style.color = theme.primary;
     this.paxRatePromptText.textContent = prompt.text;
     this.paxBadgePreview.style.backgroundColor = theme.primary;
+
+    if (isEditingCurrentPrompt) return;
 
     // Check if participant already voted for this prompt
     const existingVote = this.state.ratings[prompt.id]?.[this.paxId];
