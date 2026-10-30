@@ -501,18 +501,18 @@ class MentoringMatrixApp {
           </div>
         </div>
         <div class="slider-group">
-          <!-- Useful / Good Slider -->
+          <!-- Impactful to Mentee Slider -->
           <div class="slider-control">
             <label>
-              <span>Good / Useful:</span>
+              <span>Impactful to Mentee:</span>
               <strong class="good-val-badge" style="color: ${theme.primary};">${hasRating ? goodVal : '-'}</strong>
             </label>
             <input type="range" class="range-good" min="1" max="10" step="0.5" value="${goodVal}" style="accent-color: ${theme.primary};">
           </div>
-          <!-- Fun Slider -->
+          <!-- Fun for Mentor Slider -->
           <div class="slider-control">
             <label>
-              <span>Fun:</span>
+              <span>Fun for Mentor:</span>
               <strong class="fun-val-badge" style="color: ${theme.primary};">${hasRating ? funVal : '-'}</strong>
             </label>
             <input type="range" class="range-fun" min="1" max="10" step="0.5" value="${funVal}" style="accent-color: ${theme.primary};">

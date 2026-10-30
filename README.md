@@ -1,8 +1,8 @@
-# Mentoring Activities 2D Matrix (Useful vs Fun)
+# Mentoring Activities 2D Matrix (Impactful vs Fun)
 
 A fast, interactive web application designed for facilitators running mentoring trainings and workshops. It allows participants to evaluate and discuss different mentoring activities across two key dimensions:
-- **X-Axis**: **GOOD / USEFUL** (Scale 1 – 10)
-- **Y-Axis**: **FUN** (Scale 1 – 10)
+- **X-Axis**: **Impactful to Mentee** (Scale 1 – 10)
+- **Y-Axis**: **Fun for Mentor** (Scale 1 – 10)
 
 The application produces a clean, presentation-ready overview grid of coordinate graphs—one per activity prompt—with colored letter avatars for each participant and an organic enclosing cluster shape ("bubble") showing group alignment or divergence.
 
@@ -10,13 +10,13 @@ The application produces a clean, presentation-ready overview grid of coordinate
 
 ## 🎨 Visual Layout (Matches Training Workshop Sketch)
 ```
-          FUN ↑
-              |       (A) [Initial badges]
-              |    (M)   (E)
-              |   ╭──────────╮
-              |   │ Cluster  │
-              |   ╰──────────╯
-              +-------------------> GOOD (USEFUL)
+          Fun for Mentor ↑
+                         |       [AND] [3-Letter Badges]
+                         |    [MAR]   [ELE]
+                         |   ╭──────────────╮
+                         |   │    Cluster   │
+                         |   ╰──────────────╯
+                         +-------------------> Impactful to Mentee
 ```
 
 ---

@@ -134,25 +134,25 @@ export class GraphRenderer {
     yAxis.setAttribute('marker-end', 'url(#arrowhead)');
     axisGroup.appendChild(yAxis);
 
-    // Axis Labels
+    // Axis Labels: "Fun for Mentor" and "Impactful to Mentee"
     const yLabel = document.createElementNS(svgNS, 'text');
-    yLabel.setAttribute('x', originX - 10);
-    yLabel.setAttribute('y', endY - 6);
-    yLabel.setAttribute('text-anchor', 'end');
+    yLabel.setAttribute('x', originX);
+    yLabel.setAttribute('y', endY - 12);
+    yLabel.setAttribute('text-anchor', 'middle');
     yLabel.setAttribute('fill', '#0f172a');
-    yLabel.setAttribute('font-size', '15');
+    yLabel.setAttribute('font-size', compact ? '12' : '14');
     yLabel.setAttribute('font-weight', '800');
-    yLabel.textContent = 'FUN';
+    yLabel.textContent = 'Fun for Mentor';
     axisGroup.appendChild(yLabel);
 
     const xLabel = document.createElementNS(svgNS, 'text');
-    xLabel.setAttribute('x', endX - 8);
+    xLabel.setAttribute('x', endX);
     xLabel.setAttribute('y', originY + 28);
     xLabel.setAttribute('text-anchor', 'end');
     xLabel.setAttribute('fill', '#0f172a');
-    xLabel.setAttribute('font-size', '15');
+    xLabel.setAttribute('font-size', compact ? '12' : '14');
     xLabel.setAttribute('font-weight', '800');
-    xLabel.textContent = 'GOOD';
+    xLabel.textContent = 'Impactful to Mentee';
     axisGroup.appendChild(xLabel);
 
     // Ticks
@@ -259,7 +259,7 @@ export class GraphRenderer {
 
       // Tooltip
       const tooltip = document.createElementNS(svgNS, 'title');
-      tooltip.textContent = `${pt.participant.name} (${code}) — Good: ${pt.good}, Fun: ${pt.fun}`;
+      tooltip.textContent = `${pt.participant.name} (${code}) — Impactful: ${pt.good}, Fun: ${pt.fun}`;
       g.appendChild(tooltip);
 
       g.appendChild(rect);
