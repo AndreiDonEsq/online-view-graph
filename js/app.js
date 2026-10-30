@@ -9,9 +9,9 @@
  *    with touch sliders, and see final graphs when finished.
  */
 
-import { AppState, getGraphTheme } from './state.js?v=20261030.3';
-import { GraphRenderer } from './graph.js?v=20261030.3';
-import { RoomNetwork } from './network.js?v=20261030.3';
+import { AppState, getGraphTheme } from './state.js?v=20261030.5';
+import { GraphRenderer } from './graph.js?v=20261030.5';
+import { RoomNetwork } from './network.js?v=20261030.5';
 
 class MentoringMatrixApp {
   constructor() {
@@ -37,10 +37,13 @@ class MentoringMatrixApp {
     this.paxId = localStorage.getItem(`${this.paxStoragePrefix}id`) || sessionStorage.getItem(`${this.paxStoragePrefix}id`) || null;
     this.paxName = localStorage.getItem(`${this.paxStoragePrefix}name`) || sessionStorage.getItem(`${this.paxStoragePrefix}name`) || '';
     this.paxCode = localStorage.getItem(`${this.paxStoragePrefix}code`) || sessionStorage.getItem(`${this.paxStoragePrefix}code`) || '';
-    this.paxSubmittedForPrompt = {}; // { [promptId]: true }
+    this.pendingVotes = new Map();
     this.paxJoinTimer = null;
     this.paxJoinAttempt = 0;
     this.paxJoinAcknowledged = false;
+    this.hostBroadcastTimer = null;
+    this.hostBroadcastPending = false;
+    this.hostBroadcastRunning = false;
 
     this.initDOMElements();
     this.bindEvents();
@@ -185,7 +188,15 @@ class MentoringMatrixApp {
     }
 
     if (this.btnCreateRoom) {
-      this.btnCreateRoom.addEventListener('click', () => this.handleCreateRoom());
+      this.btnCreateRoom.addEventListener('click', async () => {
+        if (this.btnCreateRoom.disabled) return;
+        this.btnCreateRoom.disabled = true;
+        try {
+          await this.handleCreateRoom();
+        } finally {
+          this.btnCreateRoom.disabled = false;
+        }
+      });
     }
     if (this.btnRefreshEverything) {
       this.btnRefreshEverything.addEventListener('click', async () => {
@@ -279,7 +290,41 @@ class MentoringMatrixApp {
     this.hostHeader.style.display = 'flex';
     this.paxHeader.style.display = 'none';
     this.renderSetupPromptRows(6); // 6 blank prompts ready to fill
+    if (this.restoreHostRoom()) return;
     this.switchHostView('setup');
+  }
+
+  saveHostRoom() {
+    if (!this.roomTopic) return;
+    try {
+      sessionStorage.setItem('mentoring_host_room', JSON.stringify({
+        roomTopic: this.roomTopic, roomCode: this.roomCode,
+        hostStatus: this.hostStatus, activePromptIndex: this.activePromptIndex
+      }));
+    } catch (error) {
+      console.warn('Could not save room connection:', error);
+    }
+  }
+
+  restoreHostRoom() {
+    try {
+      const saved = JSON.parse(sessionStorage.getItem('mentoring_host_room'));
+      if (!saved || typeof saved.roomTopic !== 'string' || !saved.roomTopic ||
+          typeof saved.roomCode !== 'string' ||
+          !['waiting', 'active', 'finished'].includes(saved.hostStatus) ||
+          !Number.isInteger(saved.activePromptIndex) || saved.activePromptIndex < 0 ||
+          !this.state.prompts[saved.activePromptIndex]) return false;
+      this.roomTopic = saved.roomTopic;
+      this.roomCode = saved.roomCode;
+      this.hostStatus = saved.hostStatus;
+      this.activePromptIndex = saved.activePromptIndex;
+      this.renderJoinedPaxPills();
+      this.connectHostRoom();
+      return true;
+    } catch (error) {
+      console.warn('Could not restore room connection:', error);
+      return false;
+    }
   }
 
   switchHostView(view) {
@@ -310,6 +355,13 @@ class MentoringMatrixApp {
   }
 
   async closeHostRoom() {
+    try {
+      sessionStorage.removeItem('mentoring_host_room');
+    } catch (error) {
+      console.warn('Could not remove saved room connection:', error);
+    }
+    clearTimeout(this.hostBroadcastTimer);
+    this.hostBroadcastPending = false;
     const previousNetwork = this.network;
     this.network = null;
     if (previousNetwork) {
@@ -352,7 +404,11 @@ class MentoringMatrixApp {
     this.roomCode = Math.random().toString(36).substring(2, 7).toUpperCase();
     this.roomTopic = `mentoring_${this.roomCode.toLowerCase()}_${Date.now().toString(36)}`;
     this.hostStatus = 'waiting';
+    this.saveHostRoom();
+    this.connectHostRoom();
+  }
 
+  connectHostRoom() {
     const joinUrl = `${window.location.origin}${window.location.pathname}?room=${encodeURIComponent(this.roomTopic)}&code=${this.roomCode}`;
 
     this.displayRoomCode.textContent = this.roomCode;
@@ -368,34 +424,57 @@ class MentoringMatrixApp {
       onOpen: () => {
         if (this.network?.roomTopic !== topic) return;
         this.hostNetworkStatus.textContent = 'Connected';
+        this.setRoomError('');
         this.broadcastHostState();
       },
       onError: (message) => {
-        if (this.network?.roomTopic === topic) this.hostNetworkStatus.textContent = message;
+        if (this.network?.roomTopic === topic) {
+          this.hostNetworkStatus.textContent = message;
+          this.setRoomError(message);
+        }
       }
     });
 
     // State is sent on connection, participant joins, votes, and host actions.
     // Idle broadcasts consume the shared service quota without changing anything.
-    this.switchHostView('waiting');
+    this.switchHostView(this.hostStatus === 'finished' ? 'overview' : this.hostStatus);
   }
 
-  async broadcastHostState() {
+  broadcastHostState(delay = 200) {
     if (!this.network) return;
+    this.saveHostRoom();
+    // Votes can share a reply; host navigation and joins still get a fast update.
+    if (delay > 200 && this.hostBroadcastPending) return;
+    this.hostBroadcastPending = true;
+    clearTimeout(this.hostBroadcastTimer);
+    this.hostBroadcastTimer = setTimeout(() => this.flushHostState(), delay);
+  }
+
+  async flushHostState() {
+    if (!this.network || this.hostBroadcastRunning) return;
     const network = this.network;
+    this.hostBroadcastRunning = true;
+    try {
+      while (this.hostBroadcastPending && this.network === network) {
+        this.hostBroadcastPending = false;
+        const payload = {
+          type: 'host_sync',
+          status: this.hostStatus,
+          roomCode: this.roomCode,
+          promptIndex: this.activePromptIndex,
+          prompts: this.state.prompts,
+          participants: this.state.participants,
+          ratings: this.state.ratings
+        };
 
-    const payload = {
-      type: 'host_sync',
-      status: this.hostStatus,
-      roomCode: this.roomCode,
-      promptIndex: this.activePromptIndex,
-      prompts: this.state.prompts,
-      participants: this.state.participants,
-      ratings: this.state.ratings
-    };
-
-    if (await network.publish(payload) && this.network === network) {
-      this.hostNetworkStatus.textContent = 'Connected';
+        if (await network.publish(payload) && this.network === network && network.isConnected) {
+          this.hostNetworkStatus.textContent = 'Connected';
+          this.setRoomError('');
+        }
+      }
+    } finally {
+      this.hostBroadcastRunning = false;
+      if (this.hostBroadcastPending && this.network) this.broadcastHostState();
     }
   }
 
@@ -407,17 +486,16 @@ class MentoringMatrixApp {
       this.handlePaxJoinedOnHost(msg);
     } else if (msg.type === 'pax_vote') {
       this.handlePaxVotedOnHost(msg);
-    } else if (msg.type === 'pax_hello') {
-      this.broadcastHostState();
     }
   }
 
-  handlePaxJoinedOnHost({ paxId, name, code }) {
+  handlePaxJoinedOnHost({ paxId, name }) {
+    if (typeof paxId !== 'string' || !paxId || typeof name !== 'string' || !name.trim()) return;
     if (!this.state.participants.some(p => p.id === paxId)) {
       this.state.participants.push({
         id: paxId,
         name: name || 'Participant',
-        code: code || name.substring(0, 3).toUpperCase()
+        code: name.replace(/[^a-zA-Z0-9]/g, '').substring(0, 3).toUpperCase() || 'PAX'
       });
       this.state.notify();
     }
@@ -440,7 +518,7 @@ class MentoringMatrixApp {
       const pill = document.createElement('div');
       pill.className = 'participant-pill';
       pill.innerHTML = `
-        <span class="pill-code-badge">${p.code}</span>
+        <span class="pill-code-badge">${this.escapeHTML(p.code)}</span>
         <span>${this.escapeHTML(p.name)}</span>
       `;
       this.joinedPaxPills.appendChild(pill);
@@ -565,11 +643,15 @@ class MentoringMatrixApp {
   }
 
   handlePaxVotedOnHost({ paxId, promptId, good, fun }) {
+    if (!this.state.participants.some(p => p.id === paxId) ||
+        !this.state.prompts.some(p => p.id === promptId) ||
+        !Number.isFinite(good) || !Number.isFinite(fun) ||
+        good < 1 || good > 10 || fun < 1 || fun > 10) return;
     this.state.setRating(promptId, paxId, good, fun);
     if (this.hostStatus === 'active') {
       this.renderHostActivePrompt();
     }
-    this.broadcastHostState();
+    this.broadcastHostState(2000);
   }
 
   renderSetupPromptRows(count) {
@@ -670,8 +752,10 @@ class MentoringMatrixApp {
     // Connect to room network
     this.network = new RoomNetwork(this.roomTopic, (msg) => this.handlePaxIncomingMessage(msg), {
       onOpen: () => {
+        this.setRoomError('');
         if (this.paxId) {
           this.paxJoinAcknowledged = false;
+          this.paxJoinAttempt = 0;
           this.paxWaitingHeading.textContent = `Connecting, ${this.paxName}…`;
           this.paxWaitingStatus.textContent = 'Waiting for the facilitator to confirm your connection…';
           this.requestPaxJoin();
@@ -679,6 +763,7 @@ class MentoringMatrixApp {
       },
       onError: (message) => {
         this.paxWaitingStatus.textContent = message;
+        this.setRoomError(message);
       }
     });
 
@@ -699,6 +784,9 @@ class MentoringMatrixApp {
   requestPaxJoin() {
     if (!this.paxId || this.paxJoinAcknowledged) return;
     clearTimeout(this.paxJoinTimer);
+    this.paxJoinTimer = null;
+    // onOpen resumes joining once the subscription can receive the host reply.
+    if (!this.network.isConnected) return;
     // Retry independently of host broadcasts, with backoff to respect service limits.
     const delay = Math.min(8000 * (2 ** this.paxJoinAttempt++), 60000);
     this.paxJoinTimer = setTimeout(() => this.requestPaxJoin(), delay);
@@ -766,7 +854,9 @@ class MentoringMatrixApp {
       this.paxId = null;
       this.paxName = '';
       this.paxCode = '';
-      this.paxSubmittedForPrompt = {};
+      for (const vote of this.pendingVotes.values()) clearTimeout(vote.timer);
+      this.pendingVotes.clear();
+      this.setRoomError('');
       this.state.resetAll();
       this.switchPaxView('join');
       this.paxHeaderRoomTitle.textContent = 'Room Closed';
@@ -786,6 +876,17 @@ class MentoringMatrixApp {
     if (Array.isArray(sync.prompts)) this.state.prompts = sync.prompts;
     if (Array.isArray(sync.participants)) this.state.participants = sync.participants;
     if (sync.ratings) this.state.ratings = sync.ratings;
+    for (const [promptId, vote] of this.pendingVotes) {
+      const confirmed = sync.ratings?.[promptId]?.[this.paxId];
+      if (confirmed?.good === vote.good && confirmed?.fun === vote.fun) {
+        clearTimeout(vote.timer);
+        this.pendingVotes.delete(promptId);
+        if (this.state.prompts[this.activePromptIndex]?.id === promptId) {
+          this.paxSubmitStatus.textContent = '✓ Rating received by the facilitator.';
+          this.btnPaxSubmitVote.textContent = 'Update Rating ✓';
+        }
+      }
+    }
 
     if (!this.paxId) {
       // Haven't joined yet
@@ -842,6 +943,7 @@ class MentoringMatrixApp {
       this.paxValGood.textContent = existingVote.good.toFixed(1);
       this.paxValFun.textContent = existingVote.fun.toFixed(1);
       this.paxSubmitStatus.style.display = 'block';
+      this.paxSubmitStatus.textContent = '✓ Rating received by the facilitator.';
       this.btnPaxSubmitVote.textContent = 'Update Rating ✓';
     } else {
       this.paxSliderGood.value = 5.0;
@@ -862,10 +964,19 @@ class MentoringMatrixApp {
     const good = parseFloat(this.paxSliderGood.value);
     const fun = parseFloat(this.paxSliderFun.value);
 
-    // Save locally
-    this.state.setRating(prompt.id, this.paxId, good, fun);
-
-    // Publish to host
+    clearTimeout(this.pendingVotes.get(prompt.id)?.timer);
+    const vote = { good, fun };
+    this.pendingVotes.set(prompt.id, vote);
+    this.paxSubmitStatus.style.display = 'block';
+    this.paxSubmitStatus.textContent = 'Sending rating; waiting for the facilitator to confirm…';
+    this.btnPaxSubmitVote.textContent = 'Send Again';
+    const markUnconfirmed = () => {
+      if (this.pendingVotes.get(prompt.id) !== vote) return;
+      if (this.state.prompts[this.activePromptIndex]?.id === prompt.id) {
+        this.paxSubmitStatus.textContent = 'Rating has not been confirmed. Tap Send Again to retry.';
+      }
+    };
+    vote.timer = setTimeout(markUnconfirmed, 15000);
     this.network.publish({
       type: 'pax_vote',
       paxId: this.paxId,
@@ -873,10 +984,15 @@ class MentoringMatrixApp {
       promptIndex: this.activePromptIndex,
       good,
       fun
+    }).then(sent => {
+      if (!sent) markUnconfirmed();
     });
+  }
 
-    this.paxSubmitStatus.style.display = 'block';
-    this.btnPaxSubmitVote.textContent = 'Rating Saved ✓';
+  setRoomError(message) {
+    const banner = document.getElementById('room-network-error');
+    banner.textContent = message;
+    banner.hidden = !message;
   }
 
   renderPaxResultsScreen() {

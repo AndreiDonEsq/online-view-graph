@@ -1,120 +1,121 @@
-/**
- * network.js
- * 
- * Lightweight, zero-dependency real-time sync service using public HTTPS/SSE pub-sub.
- * Powered by ntfy.sh (standard SSE EventSource + HTTP POST).
- * Works seamlessly across mobile phones (iOS Safari, Android Chrome) and desktops.
- */
-
+/** One SSE subscription per client; EventSource owns reconnection. */
 export class RoomNetwork {
-  /**
-   * @param {string} roomTopic - The unique room topic identifier
-   * @param {Function} onMessage - Callback for incoming messages
-   */
   constructor(roomTopic, onMessage, { onOpen, onError } = {}) {
     this.roomTopic = roomTopic;
-    this.onMessage = onMessage;
-    this.onOpen = onOpen;
     this.onError = onError;
-    this.eventSource = null;
     this.isConnected = false;
-    this.reconnectTimer = null;
-    this.connectionTimer = null;
-    this.reconnectAttempt = 0;
     this.disconnected = false;
-    this.connect();
-  }
-
-  connect() {
-    if (this.disconnected) return;
-    if (this.eventSource) {
-      try {
-        this.eventSource.close();
-      } catch (e) {}
-    }
-
-    // Subscribe via native browser Server-Sent Events (SSE)
-    const streamUrl = `https://ntfy.sh/${encodeURIComponent(this.roomTopic)}/sse`;
-    this.eventSource = new EventSource(streamUrl);
-
-    this.eventSource.onopen = () => {
-      this.isConnected = true;
-      clearTimeout(this.connectionTimer);
-      this.reconnectAttempt = 0;
-      console.log(`[Network] Connected to room: ${this.roomTopic}`);
-      this.onOpen?.();
-    };
-
-    this.eventSource.onmessage = (event) => {
-      try {
-        const payload = JSON.parse(event.data);
-        if (payload.event === 'message' && payload.message) {
-          const data = JSON.parse(payload.message);
-          if (this.onMessage) {
-            this.onMessage(data);
-          }
-        }
-      } catch (err) {
-        console.debug('[Network] Non-JSON message or parse error:', err);
+    this.pendingRequests = new Set();
+    const url = `https://ntfy.sh/${encodeURIComponent(roomTopic)}`;
+    this.url = url;
+    this.eventSource = new EventSource(`${url}/sse`);
+    this.connectionNotice = setTimeout(() => {
+      if (!this.disconnected && !this.isConnected) {
+        onError?.('Room service has not responded. Check the network or try a mobile hotspot.');
       }
+    }, 12000);
+    this.eventSource.onopen = () => {
+      if (this.disconnected) return;
+      clearTimeout(this.connectionNotice);
+      this.isConnected = true;
+      onOpen?.();
     };
-
-    const retryConnection = () => {
-      clearTimeout(this.connectionTimer);
-      console.warn('[Network] SSE connection error, reconnecting with backoff...');
+    this.eventSource.onerror = () => {
+      if (this.disconnected) return;
       this.isConnected = false;
-      this.eventSource.close();
-      this.onError?.('Cannot connect to the room service. Retrying automatically…');
-      clearTimeout(this.reconnectTimer);
-      const delay = Math.min(10000 * (2 ** this.reconnectAttempt++), 60000);
-      this.reconnectTimer = setTimeout(() => this.connect(), delay);
+      onError?.('Room connection interrupted. Reconnecting automatically…');
     };
-    this.eventSource.onerror = retryConnection;
-    // Some browsers leave a stalled connection pending without firing onerror.
-    this.connectionTimer = setTimeout(retryConnection, 12000);
+    this.eventSource.onmessage = (event) => {
+      if (this.disconnected) return;
+      let payload;
+      try {
+        payload = JSON.parse(event.data);
+        if (payload.event !== 'message') return;
+        if (payload.attachment) {
+          onError?.('Room update exceeds the service message limit. Use a smaller workshop.');
+          return;
+        }
+        payload = decodeMessage(payload.message);
+      } catch (error) {
+        console.warn('[Network] Ignoring malformed room message:', error);
+        return;
+      }
+      onMessage?.(payload);
+    };
   }
 
-  /**
-   * Publish a message to all participants in this room.
-   * @param {Object} data 
-   */
   async publish(data) {
+    if (this.disconnected) return false;
+    const body = encodeMessage(data);
+    // ntfy turns larger messages into attachments, which are not room updates.
+    if (new TextEncoder().encode(body).length > 4096) {
+      this.onError?.('Room update exceeds the service message limit. Use a smaller workshop.');
+      return false;
+    }
     const controller = new AbortController();
+    this.pendingRequests.add(controller);
     const timeout = setTimeout(() => controller.abort(), 12000);
     try {
-      const url = `https://ntfy.sh/${encodeURIComponent(this.roomTopic)}`;
-      const response = await fetch(url, {
+      const response = await fetch(this.url, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        // A topic endpoint accepts the JSON as message text; avoid a CORS preflight.
+        headers: { 'Content-Type': 'text/plain;charset=UTF-8' },
         signal: controller.signal,
-        body: JSON.stringify(data)
+        body
       });
       if (!response.ok) {
-        const message = response.status === 429
-          ? 'Room service is temporarily limiting requests. Please wait; joining will retry automatically.'
-          : `Could not send to the room (HTTP ${response.status}). Check your connection.`;
-        this.onError?.(message);
+        this.onError?.(response.status === 429
+          ? 'Room service limit reached. Wait before retrying; devices on the same Wi-Fi share limits.'
+          : `Room service rejected the update (HTTP ${response.status}). Please retry.`);
         return false;
       }
-      return true;
-    } catch (err) {
-      console.error('[Network] Publish error:', err);
-      this.onError?.('Could not reach the room. Check your connection; joining will retry automatically.');
+      return !this.disconnected;
+    } catch (error) {
+      if (!this.disconnected) this.onError?.('Could not send the room update. Check your connection and retry.');
       return false;
     } finally {
       clearTimeout(timeout);
+      this.pendingRequests.delete(controller);
     }
   }
 
   disconnect() {
     this.disconnected = true;
-    clearTimeout(this.reconnectTimer);
-    clearTimeout(this.connectionTimer);
-    if (this.eventSource) {
-      this.eventSource.close();
-      this.eventSource = null;
-      this.isConnected = false;
-    }
+    this.isConnected = false;
+    clearTimeout(this.connectionNotice);
+    this.eventSource.close();
+    for (const controller of this.pendingRequests) controller.abort();
+    this.pendingRequests.clear();
   }
 }
 
+// Snapshots index ratings by the participant/prompt lists already in the message.
+// This avoids repeating long participant IDs and field names for every rating.
+function encodeMessage(data) {
+  if (data.type !== 'host_sync') return JSON.stringify(data);
+  return JSON.stringify([
+    'matrix-sync-1', data.status, data.roomCode, data.promptIndex,
+    data.prompts.map(p => [p.id, p.text]),
+    data.participants.map(p => [p.id, p.name, p.code]),
+    data.prompts.map(prompt => data.participants.map(participant => {
+      const rating = data.ratings[prompt.id]?.[participant.id];
+      return rating ? [rating.good, rating.fun] : null;
+    }))
+  ]);
+}
+
+function decodeMessage(message) {
+  const data = JSON.parse(message);
+  if (!Array.isArray(data) || data[0] !== 'matrix-sync-1') return data;
+  const [, status, roomCode, promptIndex, promptRows, participantRows, ratingRows] = data;
+  const prompts = promptRows.map(([id, text]) => ({ id, text }));
+  const participants = participantRows.map(([id, name, code]) => ({ id, name, code }));
+  const ratings = Object.fromEntries(prompts.map((prompt, promptIndex) => [
+    prompt.id,
+    Object.fromEntries(participants.flatMap((participant, participantIndex) => {
+      const rating = ratingRows[promptIndex]?.[participantIndex];
+      return rating ? [[participant.id, { good: rating[0], fun: rating[1] }]] : [];
+    }))
+  ]));
+  return { type: 'host_sync', status, roomCode, promptIndex, prompts, participants, ratings };
+}

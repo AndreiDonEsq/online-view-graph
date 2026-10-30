@@ -84,3 +84,64 @@ Open `http://localhost:3000` in your web browser.
 - Connect your GitHub repository to Vercel or Netlify.
 - Deploy with default settings (zero configuration required).
 
+
+## Live rooms: limits and troubleshooting
+
+The current static site uses ntfy.sh as a public message relay. The facilitator's
+browser owns the room state and must stay open during voting. Refreshing the
+same facilitator tab restores its room connection, participants, ratings, and
+current activity. The connection metadata is saved in sessionStorage and ratings
+in localStorage; closing the tab or clearing browser storage is not a supported
+room recovery path. Locally saved graphs are not a persistent online room.
+
+The most likely causes of room failures are:
+
+- Shared service limits: ntfy documents 30 simultaneous subscriptions per visitor
+  (IP address) and 250 messages per day on ntfy.sh. Phones on workshop Wi-Fi can
+  share these limits. Recreating a room does not reset the IP's quota.
+- Full state size: prompts, participants, and all ratings are broadcast together.
+  Snapshots now use a compact wire format that indexes ratings by participant and
+  prompt instead of repeating IDs and field names. A regression fixture with 15
+  participants and six fully rated activities fits under 4,096 bytes. Larger
+  updates are rejected explicitly because ntfy would convert them into attachments.
+- Interrupted delivery: a successful publish only means the relay accepted the
+  message. The app now marks a vote received only when the facilitator sends it
+  back in a state update. Unconfirmed votes can be sent again.
+
+Reconnection belongs to the native `EventSource`; there is no second reconnect
+loop. Participant joins wait until the subscription is open and retry until the
+facilitator acknowledges them. Joins and navigation are combined over 200 ms;
+vote acknowledgments share a snapshot over two seconds. Snapshots are sent
+sequentially to reduce bursts and prevent overlapping snapshot requests.
+
+Errors appear above every screen. Inspect the browser Network panel for the
+`ntfy.sh/.../sse` response: HTTP 429 suggests a service limit, while a pending or
+failed connection without a status can indicate network filtering or an outage.
+A live probe during the October 30 investigation timed out without an HTTP
+response; it did not establish a particular server error.
+
+For the intended one-day workshop with 10–15 participants, keep GitHub Pages
+and this relay rather than adding a hosted backend. Use one facilitator tab and
+one tab per participant. With six activities and one submission per activity,
+15 participants produce 90 vote messages. A conservative unbatched estimate
+including joins, host replies, navigation, and room creation is about 217
+published messages, below the documented 250-message daily limit. Batching
+usually lowers this, but retries, updates, prior testing, and other users on
+the same public IP consume the same allowance. Bursts also have request limits;
+this is not a guarantee of service availability. Leave time between activities.
+
+Before the workshop, test a phone on the actual venue network. The host should
+stay awake with the page open. GitHub Pages only serves the files: live voting
+still needs access to ntfy.sh. If that service is blocked or already rate
+limited on the venue network, changing the room code will not fix it.
+
+Service reference: [ntfy publishing limits](https://docs.ntfy.sh/publish/#limitations)
+and [subscription API](https://docs.ntfy.sh/subscribe/api/).
+
+Run room regression checks with Node.js:
+
+```bash
+node --test tests/room.test.mjs
+```
+
+These use a simulated transport; they do not assert live service availability.
