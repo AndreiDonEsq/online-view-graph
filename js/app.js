@@ -761,6 +761,18 @@ class MentoringMatrixApp {
       return;
     }
 
+    // Keep retrying a missed join until the host acknowledges this participant.
+    // Reuse the same ID so retries cannot create duplicate participant entries.
+    if (Array.isArray(sync.participants) &&
+        !sync.participants.some(participant => participant.id === this.paxId)) {
+      this.network.publish({
+        type: 'pax_join',
+        paxId: this.paxId,
+        name: this.paxName,
+        code: this.paxCode
+      });
+    }
+
     if (sync.status === 'waiting') {
       this.switchPaxView('waiting');
     } else if (sync.status === 'active') {
